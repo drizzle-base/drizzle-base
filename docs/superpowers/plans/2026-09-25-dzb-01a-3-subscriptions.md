@@ -24,7 +24,7 @@ precise queries). v2's answers, each pinned by a test that fails without it:
 |---|---|
 | A1 two concurrent subscribes of one key open it twice; an unsubscribe removes the other's live entry | check-then-create with no await; unsubscribe only `if (entries.get(key) === entry)`, idempotent (Task 4) |
 | A2 a subscriber can receive an older value after a newer one | a cycle re-runs only entries whose current value's snapshot is contained in S; the others wait for the next cycle (`contains`, Tasks 1 and 4) |
-| A3 DDL can leave a read-set wrong forever (catalog cache poisoned by a snapshot that predates the DDL) | a streamed DDL dirties every entry regardless of visibility; the catalog stops caching until a cycle whose snapshot sees the DDL completes (Tasks 2, 3, 6) |
+| A3 DDL can leave a read-set wrong forever (catalog cache poisoned by a snapshot that predates the DDL) | a streamed DDL dirties every entry regardless of visibility; ~~the catalog stops caching until…~~ superseded in v3: no cross-run catalog cache at all (Tasks 2, 3, 6) |
 | A4 a failed cycle leaves dirty entries stuck; a throwing listener blocks the others | the loop runs while anything is dirty, with backoff after a failure; every listener call is isolated (Tasks 4, 6) |
 | A5 `reset()` races in-flight opens; nothing blocks subscribing while the capture is down | a generation counter discards stale opens and cycles; `reset()` puts the engine down until `resume()` (Task 7) |
 | A6 `mutate()` reports a committed write as failed | a confirmation failure is `CommittedUnconfirmedError` carrying `commitLsn` (Task 5) |
@@ -43,6 +43,25 @@ Not taken: M5's "a joiner of a dirty entry waits for the next cycle" — a joine
 then the cycle's push, like any subscriber; recorded as a deliberate choice. B7 (OPAQUE relations outside the
 stream never re-run by writes to them) goes into the product docs when they exist.
 
+## v3 — the review's second pass (25 Sep 2026)
+
+The same reviewer checked v2 against its code and tests: most findings closed, FIX-FIRST on these:
+
+| Finding | v3 |
+|---|---|
+| N-A1 `isTransient` counted any error without a SQLSTATE — a handler's own `throw` — as transient: never pushed, and re-run in a loop with no backoff | transient = SQLSTATE 08/40/53/57 or Bun's connection-closed code, never "no errno"; a transient entry leaves the dirty set and returns after a backoff timer (no spinning cycles), pushed as an error after 5 tries (Tasks 3, 4) |
+| N-A2 the prune ticket was read before the snapshot: a fresh query with a later ticket could hold an earlier snapshot | the ticket is read after the snapshot statement returns, in the cycle and in the prune timer (Task 4) |
+| N-A3 / N-M1 catalog caching could be re-enabled while a pre-DDL query was in flight; the DDL sabotage was vacuous | **the catalog is no longer cached across runs**: each run resolves in its own snapshot, memoised within that run only. The whole "poisoned catalog" class disappears instead of being patched; the cost is measured in Task 7's bench. The DDL test's sabotage becomes "DDL respects visibility" (Tasks 3, 6) |
+| N-M2 sabotage (f) vacuous | the sabotage is v1's loop condition (`while (forced)`), which the failed-cycle test does catch (Task 6) |
+| N-M3 the `prepare: false` test could not fail (no parameters) and could not run (a view depends on `users.age`) | a parameterised `select *` on `comments` plus `ADD COLUMN` (probed: `0A000` with prepare, the new column without); the Runtime refuses a pool whose `options.prepare` is not `false` (Task 3) |
+| N-M4 a reset during COMMIT or inside a listener still pushed old values; `flush()` while down hung; `resume()` did not schedule | the generation is checked after COMMIT and before every delivery; `flush()` rejects while down; `resume()` schedules (Tasks 4, 7) |
+| N-M5 an entry turned volatile kept the shared key and could be replaced | it is re-keyed to a private key; `open()` never takes a key another live entry holds (Task 4) |
+| N-M6 nothing told a client a cycle had completed | `onCycleComplete(listener)`: every completed cycle, pushed or not (Tasks 4, 5) |
+| N-B1 the unsubscribe identity check was untested; `close()` left barriers pending | a reset → resume → re-subscribe → old `off()` test; `close()` rejects in-flight barriers (Tasks 4, 7) |
+
+Accepted deviations stand: a joiner (and a fresh subscriber) gets a value outside any consistent transition
+(`cycle: null` or the entry's last value) — 01a-4 must treat those as provisional; B7 goes to the product docs.
+
 ## Global Constraints
 
 - Module `src/subscriptions/`, through `index.ts`; LAYERS allow `sql, capture, readset, runtime`. Not exported from `drizzle-base/server` yet.
@@ -50,7 +69,8 @@ stream never re-run by writes to them) goes into the product docs when they exis
 - **No await** between inserting a read-set into the index and replaying the buffer, nor anywhere in `onEvent`.
 - **A cycle never pushes a value older than the one its subscribers already have** (`contains(S, entry.visibility)`).
 - **A barrier is matched by id AND LSN** (`lsnToBigInt`), and its timeout covers the `emitBarrier` round trip.
-- **The runtime's pool uses `prepare: false`.**
+- **The runtime's pool uses `prepare: false`** — enforced by the Runtime constructor.
+- **The catalog is resolved per run** (memoised within one run only); nothing about the catalog survives from one run to the next.
 - Snapshot ids validated against `^[0-9A-F]+-[0-9A-F]+-[0-9]+$`. Tests: TDD, each property with a sabotage that turns it red; premises asserted. Branch `feat/dzb-01a-3-subscriptions` (exists; this plan is committed on it).
 
 ## Review Focus
@@ -286,6 +306,8 @@ class Registry<K> {
   register(key: K, readSet: ReadSet, visibility: Visibility, buffer: RecentCommits): boolean; // dirty from birth
   remove(key: K): void;
   apply(xid: number, txn: Projection): K[];   // newly dirty; DDL dirties every entry regardless of visibility
+  clearDirty(key: K): void;                   // a transient retry waits outside the dirty set
+  markDirty(key: K): boolean;                 // false if the key is not registered
   dirtyKeys(): K[];
   get dirtyCount(): number;
   get size(): number;
@@ -352,6 +374,17 @@ describe("Registry", () => {
     r.remove("q");
     expect(r.apply(171, txn(["app.users"]))).toEqual([]);
     expect(r.size).toBe(0);
+  });
+
+  test("clearDirty and markDirty move a registered key in and out of the dirty set", () => {
+    const r = new Registry<string>();
+    r.register("q", rs(["app.posts"]), vis(100, 100), new RecentCommits());
+    r.apply(150, txn(["app.posts"]));
+    r.clearDirty("q");
+    expect(r.dirtyCount).toBe(0);
+    expect(r.markDirty("q")).toBe(true);
+    expect(r.dirtyKeys()).toEqual(["q"]);
+    expect(r.markDirty("nope")).toBe(false);
   });
 });
 ```
@@ -452,6 +485,16 @@ export class Registry<K> {
     return out;
   }
 
+  clearDirty(key: K): void {
+    this.dirty.delete(key);
+  }
+
+  markDirty(key: K): boolean {
+    if (!this.entries.has(key)) return false;
+    this.dirty.add(key);
+    return true;
+  }
+
   dirtyKeys(): K[] {
     return [...this.dirty];
   }
@@ -503,17 +546,18 @@ Barrel: `export { Registry } from "./registry"; export { stableHash } from "./st
 
 ---
 
-### Task 3: Runtime — queries in an imported snapshot; catalog caching switch; `prepare: false`
+### Task 3: Runtime — queries in an imported snapshot; the catalog per run; `prepare: false` enforced
 
-**Files:** Modify `src/runtime/runtime.ts`, `src/runtime/index.ts`, `src/readset/catalog.ts`, `test/support/db.ts`, `docs/ARCHITECTURE.md`. Tests: `test/runtime/integration/snapshot.test.ts`.
+**Files:** Modify `src/runtime/runtime.ts`, `src/runtime/index.ts`, `test/support/db.ts`, `docs/ARCHITECTURE.md`. Tests: `test/runtime/integration/snapshot.test.ts`.
 
 **Interfaces — produces:**
 ```ts
 type SnapshotCall<S> = (ctx: Ctx<S>) => Promise<unknown>;
 type SnapshotResult = { ok: true; value: unknown; readSet: ReadSet } | { ok: false; error: unknown; readSet: ReadSet };
 Runtime.runInSnapshot(snapshotId: string, calls: SnapshotCall<S>[]): Promise<SnapshotResult[]>;
-function isTransient(e: unknown): boolean;   // SQLSTATE 08/40/53/57 or no SQLSTATE (a lost connection)
-Catalog.caching: boolean;                    // false: every lookup goes to pg_catalog and is not remembered
+function isTransient(e: unknown): boolean;   // SQLSTATE 08/40/53/57, or Bun's connection-closed error code
+// Runtime no longer has a long-lived `catalog`: runQuery and runInSnapshot each resolve with `new Catalog(publication)`.
+// The constructor throws unless `opts.sql.options.prepare === false`.
 ```
 
 - [ ] **Step 1: `prepare: false` for every test pool** — in `test/support/db.ts`, `testSql` passes `prepare: false` to `new SQL({...})`, with the comment `// Bun.sql's prepared statements break after ALTER … TYPE (0A000 on every retry, probed): drizzle-base's pool never prepares.` The requirement is added to `docs/ARCHITECTURE.md` in the `runtime` module row: "its pool is created with `prepare: false`".
@@ -521,10 +565,13 @@ Catalog.caching: boolean;                    // false: every lookup goes to pg_c
 - [ ] **Step 2: Failing tests** — `test/runtime/integration/snapshot.test.ts`:
 ```ts
 import { expect, test } from "bun:test";
-import type { SQL } from "bun";
 import { sql } from "drizzle-orm";
-import { isTransient, Runtime } from "../../../src/runtime";
+import { SQL } from "bun";
+import { functions, isTransient, Runtime } from "../../../src/runtime";
 import { posts, schema, users, withApp } from "../../support/app";
+import { pgConfig } from "../../support/db";
+
+const pgConfigForSql = () => ({ hostname: pgConfig.host, port: pgConfig.port, database: pgConfig.database, username: pgConfig.user, password: pgConfig.password, max: 1 });
 
 async function exported<T>(pool: SQL, fn: (id: string) => Promise<T>): Promise<T> {
   const ex = await pool.reserve();
@@ -579,34 +626,52 @@ test("a snapshot id that is not one is refused before reaching Postgres", async 
   });
 });
 
-test("after ALTER … TYPE a warm pool returns the new type, not 0A000 (prepare: false)", async () => {
+test("after a schema change a warm pool returns the new shape, not 0A000 (prepare: false)", async () => {
   await withApp(async (pool, n) => {
     const rt = new Runtime({ sql: pool, schema, publication: n.publication });
-    await pool.unsafe(`insert into dzb_app.users(name, age) values ('a', 7)`);
-    const age = { kind: "query" as const, handler: async (ctx: Parameters<Parameters<typeof rt.runInSnapshot>[1][number]>[0]) => (await ctx.db.execute(sql`select age from dzb_app.users`))[0] };
-    for (let i = 0; i < 3; i++) await rt.runQuery(age, {});
-    await pool.unsafe(`alter table dzb_app.users alter column age type text using age::text || 'y'`);
-    expect((await rt.runQuery(age, {})).value).toEqual({ age: "7y" });
+    const pid = "0190a000-0000-7000-8000-0000000000aa";
+    await pool.unsafe(`insert into dzb_app.comments(post_id, body) values ('${pid}', 'b')`);
+    // Parameterised on purpose: an unparameterised statement does not hit the cached-plan error (probed).
+    const row = functions<typeof schema>().query(async (ctx, a: { id: string }) => (await ctx.db.execute(sql`select * from dzb_app.comments where post_id = ${a.id}`))[0]);
+    for (let i = 0; i < 3; i++) await rt.runQuery(row, { id: pid });
+    await pool.unsafe(`alter table dzb_app.comments add column extra int default 7`);
+    expect((await rt.runQuery(row, { id: pid })).value).toMatchObject({ body: "b", extra: 7 });
   });
 });
 
-test("isTransient: connection, conflict, resource and operator classes; not a deterministic error", () => {
+test("the Runtime refuses a pool that prepares statements", () => {
+  const preparing = new SQL({ ...pgConfigForSql(), prepare: true });
+  expect(() => new Runtime({ sql: preparing, schema, publication: "p" })).toThrow(/prepare: false/);
+});
+
+test("isTransient: connection, conflict, resource and operator classes — never a plain error", () => {
   const e = (errno?: string) => Object.assign(new Error("x"), { name: "PostgresError", errno });
   for (const c of ["08006", "40001", "40P01", "53300", "57014", "57P01"]) expect(isTransient(e(c))).toBe(true);
-  expect(isTransient(new Error("socket closed"))).toBe(true);
+  expect(isTransient(Object.assign(new Error("closed"), { code: "ERR_POSTGRES_CONNECTION_CLOSED" }))).toBe(true);
+  expect(isTransient(new Error("no users allowed"))).toBe(false); // a handler's own throw is deterministic
   for (const c of ["22012", "42703", "23505"]) expect(isTransient(e(c))).toBe(false);
   expect(isTransient({ cause: e("40001") })).toBe(true);
 });
 ```
 
 - [ ] **Step 3: Run — expect FAIL.**
-- [ ] **Step 4: Implement** — `Catalog`: add `caching = true;` and at the top of `cached(...)`: `if (!this.caching) return load();`. In `runtime.ts` export `isTransient` (reusing the `rootError` walk):
+- [ ] **Step 4: Implement** — in `runtime.ts`:
+  - **The catalog per run.** Remove the `readonly catalog` field; `runQuery` does `const catalog = new Catalog(this.opts.publication)` and passes it to `readSetOf`; so does `runInSnapshot` (below). A `Catalog` memoises within one run — one connection, one snapshot — and nothing survives to the next run, so a lookup made under one snapshot is never served to another (the "poisoned catalog" class removed; its cost is measured in Task 7).
+  - **`prepare: false` enforced** in the constructor:
 ```ts
-// Errors worth retrying on the next cycle instead of caching as the query's result: connection (08), conflict (40),
-// resources (53), operator intervention (57), or no SQLSTATE at all (a lost socket).
+    // Bun.sql's prepared statements break after a schema change (0A000 "cached plan must not change result type",
+    // probed on parameterised statements): drizzle-base's pool never prepares.
+    if ((opts.sql as unknown as { options?: { prepare?: boolean } }).options?.prepare !== false)
+      throw new Error("drizzle-base needs a pool created with prepare: false (Bun.sql's prepared statements break after a schema change)");
+```
+  - **`isTransient`**, reusing the `rootError` walk:
+```ts
+// Errors worth retrying on a later cycle instead of pushing as the query's result: connection (08), conflict (40),
+// resources (53), operator intervention (57), or Bun's own connection-closed error. A handler's plain throw is not.
 export function isTransient(e: unknown): boolean {
   const code = sqlState(e);
-  return code === undefined || /^(08|40|53|57)/.test(code);
+  if (code !== undefined) return /^(08|40|53|57)/.test(code);
+  return /^ERR_POSTGRES_CONNECTION/.test(String((rootError(e) as { code?: unknown })?.code ?? ""));
 }
 ```
 and `runInSnapshot` (P-M10: one transaction per connection per cycle; a savepoint per call; a read-set resolution failure widens to OPAQUE for that call):
@@ -626,6 +691,7 @@ const SNAPSHOT_ID = /^[0-9A-F]+-[0-9A-F]+-[0-9]+$/i;
       try {
         await conn.unsafe(`set transaction snapshot '${snapshotId}'`);
         const [{ sp }] = await conn.unsafe("select current_setting('search_path') as sp");
+        const catalog = new Catalog(this.opts.publication); // memoised within this run only
         for (const call of calls) {
           const client = new CapturingClient(conn, "query");
           await conn.unsafe("savepoint dzb_call");
@@ -641,7 +707,7 @@ const SNAPSHOT_ID = /^[0-9A-F]+-[0-9A-F]+-[0-9]+$/i;
           }
           let readSet: ReadSet;
           try {
-            readSet = await readSetOf(client.statements, this.catalog, conn, sp as string);
+            readSet = await readSetOf(client.statements, catalog, conn, sp as string);
           } catch (e) {
             readSet = { tables: new Set(), opaque: [`read-set resolution failed: ${String(e)}`], volatile: [] };
           }
@@ -664,8 +730,8 @@ const SNAPSHOT_ID = /^[0-9A-F]+-[0-9A-F]+-[0-9]+$/i;
 ```
 Export `isTransient, type SnapshotCall, type SnapshotResult` from `src/runtime/index.ts`. If the ALTER test's handler type is awkward, type it as `QueryDef<typeof schema, Record<string, never>, unknown>` built with `functions<typeof schema>().query(...)` instead.
 
-- [ ] **Step 5: Run — expect PASS.** Sabotages: remove `set transaction snapshot` (first test red); `prepare: true` in `testSql` (ALTER test red). Restore.
-- [ ] **Step 6: Commit** `feat(dzb-01a-3): runInSnapshot, isTransient, a catalog caching switch; the pool never prepares (ALTER … TYPE)`.
+- [ ] **Step 5: Run — expect PASS** (the existing runtime/readset tests too: the Catalog tests construct their own). Sabotages: remove `set transaction snapshot` (first test red); `prepare: true` in `testSql` AND drop the constructor check (schema-change test red with 0A000); `isTransient` returning true for no-errno (plain-throw case red). Restore.
+- [ ] **Step 6: Commit** `feat(dzb-01a-3): runInSnapshot, isTransient, the catalog per run; the pool never prepares, enforced`.
 
 ---
 
@@ -690,6 +756,7 @@ class SubscriptionEngine<S> {
   mutate<A, R>(def: MutationDef<S, A, R>, args: A): Promise<{ value: R; cycle: number; commitLsn: string }>;   // Task 5
   reset(reason: string): void;   // Task 7
   resume(): void;                // Task 7
+  onCycleComplete(listener: (id: number) => void): () => void;
   readonly stats: EngineStats;
   get bufferSize(): number;
   close(): void;
@@ -943,18 +1010,19 @@ describe("SubscriptionEngine", () => {
 // The subscription engine: keeps every subscribed query's value current.
 //
 // Stream side (onEvent, synchronous): a committed transaction's table projection is appended to the buffer, then
-// applied to the index (rule B; DDL dirties everything and suspends catalog caching). Cycle side (async, one at a
-// time, while anything is dirty): export S; a barrier (every commit visible in S applied); re-run the dirty
-// entries whose current value S contains, in S (P-M10); re-register with S (the replay re-dirties what S missed);
-// push the changed values as one batch; prune. Entries S does not contain wait for the next cycle, so no
-// subscriber ever goes back in time.
+// applied to the index (rule B; DDL dirties everything). Cycle side (async, one at a time, while anything is
+// dirty): export S; a barrier (every commit visible in S applied); re-run the dirty entries whose current value S
+// contains, in S (P-M10); re-register with S (the replay re-dirties what S missed); push the changed values as one
+// batch; tell cycle listeners the cycle completed; prune. Entries S does not contain wait for the next cycle, so no
+// subscriber ever goes back in time. The catalog is resolved per run, never cached across runs: a lookup made under
+// one snapshot can never be served to a run under another (the plan review's A3 class, removed rather than patched).
 import type { SQL } from "bun";
 import { emitBarrier, lsnToBigInt, type StreamEvent } from "../capture";
 import { isTransient, type MutationDef, parseSnapshot, type QueryDef, type Runtime, type SnapshotCall } from "../runtime";
 import { project, RecentCommits } from "./buffer";
 import { Registry } from "./registry";
 import { stableHash } from "./stable";
-import { contains, type Visibility, visibilityOf, visibleIn } from "./xid";
+import { contains, low32, type Visibility, visibilityOf } from "./xid";
 
 export type EngineEvent<R> =
   | { kind: "value"; cycle: number | null; value: R }
@@ -991,18 +1059,21 @@ export class CommittedUnconfirmedError extends Error {
 type Listener = (e: EngineEvent<unknown>) => void;
 
 interface CacheEntry<S extends Record<string, unknown>> {
-  key: string;
+  key: string; // may change once: a shared entry whose re-run turns volatile is re-keyed to a private key
   run: SnapshotCall<S>;
   shareable: boolean;
   hash: string;
   last: EngineEvent<unknown>;
   visibility: Visibility; // the snapshot the subscribers' current value comes from
   listeners: Set<Listener>;
+  transientTries: number;
 }
 
-function deliver(l: Listener, e: EngineEvent<unknown>): void {
+const TRANSIENT_TRIES = 5;
+
+function deliver(l: (e: never) => void, e: unknown): void {
   try {
-    l(e);
+    (l as (x: unknown) => void)(e);
   } catch {
     // one subscriber's failure (a closed socket) must not keep the value from the others
   }
@@ -1014,8 +1085,10 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
   private readonly registry = new Registry<string>();
   private readonly entries = new Map<string, CacheEntry<S>>();
   private readonly pending = new Map<string, Promise<CacheEntry<S>>>();
-  private readonly barriers = new Map<string, { expected?: bigint; seen?: bigint; resolve: () => void }>();
+  private readonly barriers = new Map<string, { expected?: bigint; seen?: bigint; resolve: () => void; reject: (e: unknown) => void }>();
   private readonly inflight = new Set<number>(); // tickets of fresh queries not registered yet (start order)
+  private readonly cycleListeners = new Set<(id: number) => void>();
+  private readonly retryTimers = new Set<ReturnType<typeof setTimeout>>();
   private ticket = 0;
   private started = 0;
   private generation = 0;
@@ -1024,7 +1097,6 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
   private running = false;
   private forced = false;
   private failures = 0;
-  private ddlPending: number | null = null;
   private uniq = 0;
   private cycleWaiters: { after: number; resolve: (id: number) => void; reject: (e: unknown) => void }[] = [];
   private readonly pruneTimer: ReturnType<typeof setInterval>;
@@ -1046,6 +1118,13 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
     return this.buffer.size;
   }
 
+  // Every completed cycle, whether or not it pushed anything to a given subscriber: a client waiting for "a
+  // transition at or after cycle N" (read-your-writes) needs to hear about cycles that changed none of its queries.
+  onCycleComplete(listener: (id: number) => void): () => void {
+    this.cycleListeners.add(listener);
+    return () => this.cycleListeners.delete(listener);
+  }
+
   async subscribe<A, R>(name: string, def: QueryDef<S, A, R>, args: A, listener: (e: EngineEvent<R>) => void): Promise<() => void> {
     if (this.down || this.closed) throw new EngineDownError();
     const shared = `${name}\u0000${stableHash(args)}`;
@@ -1064,6 +1143,7 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
       if (done) return;
       done = true;
       entry.listeners.delete(l);
+      // Identity, not key: after a reset (or a re-key) the key may belong to another entry.
       if (entry.listeners.size === 0 && this.entries.get(entry.key) === entry) {
         this.entries.delete(entry.key);
         this.registry.remove(entry.key);
@@ -1079,7 +1159,8 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
       try {
         const r = await this.opts.runtime.runQuery(def, args);
         if (gen !== this.generation || this.down) throw new EngineDownError("the change stream reset during subscribe");
-        const shareable = r.readSet.volatile.length === 0;
+        // A volatile result is never shared; neither is a key another live entry already holds (it turned volatile).
+        const shareable = r.readSet.volatile.length === 0 && !this.entries.has(shared);
         const key = shareable ? shared : `${shared}\u0000${++this.uniq}`;
         const visibility = visibilityOf(r.snapshot);
         const entry: CacheEntry<S> = {
@@ -1090,6 +1171,7 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
           last: { kind: "value", cycle: null, value: r.value },
           visibility,
           listeners: new Set(),
+          transientTries: 0,
         };
         this.entries.set(key, entry);
         if (this.registry.register(key, r.readSet, visibility, this.buffer)) this.schedule();
@@ -1112,20 +1194,13 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
       if (w.expected !== undefined && w.expected === w.seen) w.resolve();
       return;
     }
-    const { txn } = e;
-    if (txn.ddl) {
-      // A lookup made under a snapshot that predates this DDL must not be cached (plan review A3).
-      this.opts.runtime.catalog.clear();
-      this.opts.runtime.catalog.caching = false;
-      this.ddlPending = txn.xid;
-    }
-    const p = project(txn);
-    this.buffer.append(txn.xid, p);
-    if (this.registry.apply(txn.xid, p).length || this.registry.dirtyCount > 0) this.schedule();
+    const p = project(e.txn);
+    this.buffer.append(e.txn.xid, p);
+    if (this.registry.apply(e.txn.xid, p).length || this.registry.dirtyCount > 0) this.schedule();
   }
 
   flush(): Promise<number> {
-    if (this.closed) return Promise.reject(new EngineDownError("engine closed"));
+    if (this.closed || this.down) return Promise.reject(new EngineDownError());
     const after = this.started;
     const p = new Promise<number>((resolve, reject) => this.cycleWaiters.push({ after, resolve, reject }));
     this.forced = true;
@@ -1146,6 +1221,8 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
     this.closed = true;
     this.down = true;
     clearInterval(this.pruneTimer);
+    for (const t of this.retryTimers) clearTimeout(t);
+    for (const b of this.barriers.values()) b.reject(new EngineDownError("engine closed"));
     for (const w of this.cycleWaiters) w.reject(new EngineDownError("engine closed"));
     this.cycleWaiters = [];
   }
@@ -1180,10 +1257,12 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
   private async barrier(): Promise<void> {
     const id = crypto.randomUUID();
     let resolve!: () => void;
-    const seen = new Promise<void>((r) => {
-      resolve = r;
+    let reject!: (e: unknown) => void;
+    const seen = new Promise<void>((res, rej) => {
+      resolve = res;
+      reject = rej;
     });
-    const w: { expected?: bigint; seen?: bigint; resolve: () => void } = { resolve };
+    const w: { expected?: bigint; seen?: bigint; resolve: () => void; reject: (e: unknown) => void } = { resolve, reject };
     this.barriers.set(id, w);
     const ms = this.opts.barrierTimeoutMs ?? 10_000;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1194,8 +1273,8 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
           if (w.seen === w.expected) w.resolve();
           await seen;
         })(),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`barrier not seen in the stream within ${ms} ms`)), ms);
+        new Promise<never>((_, rej) => {
+          timer = setTimeout(() => rej(new Error(`barrier not seen in the stream within ${ms} ms`)), ms);
         }),
       ]);
     } finally {
@@ -1204,14 +1283,28 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
     }
   }
 
+  // A transient failure (connection, conflict, resources, operator) is never cached as the result: the entry leaves
+  // the dirty set and comes back after a backoff — without spinning cycles meanwhile. After TRANSIENT_TRIES the
+  // error is pushed like any other.
+  private retryLater(entry: CacheEntry<S>): void {
+    this.registry.clearDirty(entry.key);
+    const t = setTimeout(() => {
+      this.retryTimers.delete(t);
+      if (this.entries.get(entry.key) === entry && this.registry.markDirty(entry.key)) this.schedule();
+    }, Math.min(2_000, 50 * 2 ** entry.transientTries));
+    this.retryTimers.add(t);
+  }
+
   private async cycle(): Promise<void> {
     const id = ++this.started;
     const gen = this.generation;
     const ex = await this.opts.sql.reserve();
     try {
       await ex.unsafe("begin isolation level repeatable read read only");
-      const ticketAtExport = this.ticket;
       const [{ sid, snap }] = await ex.unsafe("select pg_export_snapshot() as sid, pg_current_snapshot()::text as snap");
+      // Read AFTER the snapshot returned: a fresh query with a later ticket started after S was taken, so its own
+      // snapshot is at least as new (the plan review's N-A2).
+      const ticketAtExport = this.ticket;
       await this.barrier();
       const S = visibilityOf(parseSnapshot(snap as string));
       // Only entries whose current value S contains: re-running a newer value at an older S would go back in time.
@@ -1232,13 +1325,23 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
           const r = results[lane]![i]!;
           this.stats.reruns++;
           if (this.entries.get(entry.key) !== entry) return; // unsubscribed (or replaced) during the cycle
-          if (!r.ok && isTransient(r.error)) {
-            this.stats.transientReruns++; // stays dirty: retried next cycle, never cached as the result
+          if (!r.ok && isTransient(r.error) && entry.transientTries < TRANSIENT_TRIES) {
+            this.stats.transientReruns++;
+            entry.transientTries++;
+            this.retryLater(entry);
             return;
+          }
+          entry.transientTries = 0;
+          if (r.readSet.volatile.length && entry.shareable) {
+            // It turned volatile: give it a private key so a later subscriber never joins (nor replaces) it.
+            this.entries.delete(entry.key);
+            this.registry.remove(entry.key);
+            entry.key = `${entry.key}\u0000${++this.uniq}`;
+            entry.shareable = false;
+            this.entries.set(entry.key, entry);
           }
           this.registry.register(entry.key, r.readSet, S, this.buffer);
           entry.visibility = S;
-          if (r.readSet.volatile.length) entry.shareable = false;
           const hash = r.ok ? stableHash(r.value) : `error:${String(r.error)}`;
           if (hash === entry.hash) {
             this.stats.uselessReruns++;
@@ -1250,18 +1353,16 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
         }),
       );
       await ex.unsafe("commit");
-      if (this.ddlPending !== null && visibleIn(this.ddlPending, S)) {
-        this.opts.runtime.catalog.clear();
-        this.opts.runtime.catalog.caching = true;
-        this.ddlPending = null;
-      }
+      if (gen !== this.generation) return; // a reset during COMMIT: its subscribers were already told
       this.pruneBelow(S.xmin, ticketAtExport);
       this.stats.cycles++;
       for (const entry of changed)
         for (const l of entry.listeners) {
+          if (gen !== this.generation) return; // a listener reset the engine: the rest were told "reset"
           this.stats.pushes++;
           deliver(l, entry.last);
         }
+      for (const l of this.cycleListeners) deliver(l, id);
       this.cycleWaiters = this.cycleWaiters.filter((w) => {
         if (w.after >= id) return true;
         w.resolve(id);
@@ -1273,8 +1374,8 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
     }
   }
 
-  // A buffered commit can go once every registration still to come sees it: fresh queries started after the
-  // snapshot behind `xmin` have an xmin at least as large; the ones started before it must finish first.
+  // A buffered commit can go once every registration still to come sees it: fresh queries whose ticket is later
+  // than `ticketAtSnapshot` started after that snapshot and have an xmin at least as large; earlier ones must finish.
   private pruneBelow(xmin: number, ticketAtSnapshot: number): void {
     for (const t of this.inflight) if (t <= ticketAtSnapshot) return;
     this.buffer.prune(xmin);
@@ -1282,16 +1383,16 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
 
   private async pruneNow(): Promise<void> {
     if (this.closed || this.buffer.size === 0) return;
-    const ticketAt = this.ticket;
     const [{ x }] = await this.opts.sql`select pg_snapshot_xmin(pg_current_snapshot())::text as x`;
-    this.pruneBelow(Number(BigInt(x as string) % 2n ** 32n), ticketAt);
+    const ticketAt = this.ticket; // after the snapshot returned (N-A2)
+    this.pruneBelow(low32(BigInt(x as string)), ticketAt);
   }
 }
 ```
 Barrel: `export { CommittedUnconfirmedError, EngineDownError, type EngineEvent, type EngineStats, SubscriptionEngine } from "./engine";`
 
 - [ ] **Step 5: Run — expect PASS**; typecheck; `bun run check`.
-- [ ] **Step 6: Sabotage one at a time, each turning its named test red** (restore with `cp`): drop the `if (hash === entry.hash)` short-circuit (same-value test); let joiners share a non-shareable entry (`now()` test); `await Promise.resolve()` before `this.pending.set` in `open` (concurrent subscribes test: `runs` = 2); remove `deliver`'s try/catch (listener test); make `off` delete by key without the identity check and call it twice after a re-subscribe of the same key (add that case to the concurrent test if the first sabotage does not already redden it).
+- [ ] **Step 6: Sabotage one at a time, each turning its named test red** (restore with `cp`): drop the `if (hash === entry.hash)` short-circuit (same-value test); let joiners share a non-shareable entry (`now()` test); `await Promise.resolve()` before `this.pending.set` in `open` (concurrent subscribes test: `runs` = 2); remove `deliver`'s try/catch (listener test); push a transient result as an error (`a query that throws…` still passes — the transient path is Task 6's). The identity check in `off` is tested in Task 7 (it needs reset/resume).
 - [ ] **Step 7: Commit** `feat(dzb-01a-3): the subscription engine — cycles in one exported snapshot, never back in time, barriers by id and LSN, a shared cache`.
 
 ---
@@ -1303,7 +1404,7 @@ Barrel: `export { CommittedUnconfirmedError, EngineDownError, type EngineEvent, 
 - [ ] **Step 1: Failing tests**
 ```ts
 import { expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { functions } from "../../../src/runtime";
 import { CommittedUnconfirmedError } from "../../../src/subscriptions";
 import { posts, schema } from "../../support/app";
@@ -1324,6 +1425,20 @@ test("the returned cycle carries the write: the first push at or after it contai
       const e = await r.wait((x) => x.kind === "value" && x.cycle !== null && x.cycle >= cycle);
       expect(e.kind === "value" && e.value.includes(`p${i}`)).toBe(true);
     }
+  });
+});
+
+test("a mutation that changes nothing a client watches still completes its cycle (onCycleComplete)", async () => {
+  await withEngine(async ({ sql: pool, engine }) => {
+    await pool.unsafe(`insert into dzb_app.users(id, name) values ('${U}', 'Dan')`);
+    const titles = query(async (ctx) => (await ctx.db.select().from(posts).where(eq(posts.authorId, U))).map((p) => p.title));
+    await engine.subscribe("titles", titles, {}, () => {});
+    const completed: number[] = [];
+    engine.onCycleComplete((id) => completed.push(id));
+    const touch = mutation(async (ctx) => ctx.db.execute(sql`update dzb_app.users set name = name where id = ${U}`));
+    const { cycle } = await engine.mutate(touch, {});
+    for (let i = 0; i < 100 && !completed.some((c) => c >= cycle); i++) await Bun.sleep(20);
+    expect(completed.some((c) => c >= cycle)).toBe(true);
   });
 });
 
@@ -1363,7 +1478,7 @@ test("a committed mutation whose effect cannot be confirmed is CommittedUnconfir
     }
   }
 ```
-- [ ] **Step 4: Run — expect PASS.** Sabotage: return `cycle: 0` → the first test red on its second iteration (an earlier push without `p1` matches). Restore.
+- [ ] **Step 4: Run — expect PASS.** Sabotages: return `cycle: 0` → the first test red on its second iteration (an earlier push without `p1` matches); drop the `cycleListeners` notification → the onCycleComplete test red. Restore.
 - [ ] **Step 5: Commit** `feat(dzb-01a-3): read-your-writes by position — the reply names the cycle; an unconfirmed commit is CommittedUnconfirmedError`.
 
 ---
@@ -1524,8 +1639,8 @@ test("a transient error is retried, never pushed as the result", async () => {
   (b) `visibleIn` treating `xip` as visible → the held-open test and the gated test stay stale.
   (c) `pruneBelow` ignoring in-flight queries → the gated test.
   (d) `cycle()` without `await this.barrier()` → the two-table test.
-  (e) keep `catalog.caching` on across DDL → the rename-plus-view test.
-  (f) `schedule()` only on newly dirty entries (`if (this.registry.apply(...).length) this.schedule()`) → the failed-cycle test.
+  (e) make DDL respect visibility in `Registry.apply` (dirty only entries whose snapshot missed it) → the rename-plus-view test (the entry registered before the rename saw nothing to re-run: a rename emits no row changes).
+  (f) v1's loop condition — retry only when `forced` (`while (!this.closed && !this.down && this.forced)`) → the failed-cycle test.
   (g) cache transient errors as results → the transient test.
   If (d) stays green over three runs, raise the writer's pace or add a second touch-only table before accepting the property as tested.
 - [ ] **Step 4: Commit** `test(dzb-01a-3): deterministic consistency properties — held-open and gated commits, two tables moved together, DDL, failure recovery`.
@@ -1569,6 +1684,38 @@ test("reset puts the engine down: subscribers are told, nothing old is pushed, s
     expect(again.last()).toMatchObject({ kind: "value", value: 1 });
   });
 });
+
+test("an unsubscribe from before a reset cannot remove the entry that now holds the key", async () => {
+  await withEngine(async ({ sql: pool, engine }) => {
+    const q = query(async (ctx) => (await ctx.db.select().from(users)).length);
+    const offOld = await engine.subscribe("n", q, {}, () => {});
+    engine.reset("test");
+    engine.resume();
+    const fresh = recorder<number>();
+    await engine.subscribe("n", q, {}, fresh.listener);
+    offOld(); // the old entry is gone; its closure must not touch the new one
+    await pool.unsafe(`insert into dzb_app.users(name) values ('still live')`);
+    await fresh.wait((e) => e.kind === "value" && e.value === 1);
+  });
+});
+
+test("a reset from inside a listener stops the rest of that cycle's pushes", async () => {
+  await withEngine(async ({ sql: pool, engine }) => {
+    const n = query(async (ctx) => (await ctx.db.select().from(users)).length);
+    const names = query(async (ctx) => (await ctx.db.select().from(users)).map((u) => u.name));
+    const second = recorder<unknown>();
+    await engine.subscribe("n", n, {}, (e) => {
+      if (e.kind === "value" && e.value === 1) engine.reset("from a listener");
+    });
+    await engine.subscribe("names", names, {}, second.listener);
+    await pool.unsafe(`insert into dzb_app.users(name) values ('x')`);
+    await second.wait((e) => e.kind === "reset");
+    await Bun.sleep(100);
+    const afterReset = second.events.slice(second.events.findIndex((e) => e.kind === "reset") + 1);
+    expect(afterReset).toEqual([]); // no value delivered after it was told "reset"
+    expect(second.events.filter((e) => e.kind === "value").length).toBe(1); // only the fresh value, from before
+  });
+});
 ```
 ```ts
 // test/subscriptions/integration/buffer.test.ts
@@ -1605,17 +1752,20 @@ test("with no subscription at all, the buffer stays bounded under a write worklo
     this.entries.clear();
     this.pending.clear();
     this.buffer.clear();
-    this.opts.runtime.catalog.clear();
+    for (const t of this.retryTimers) clearTimeout(t);
+    this.retryTimers.clear();
     for (const w of this.cycleWaiters) w.reject(new EngineDownError());
     this.cycleWaiters = [];
     for (const l of listeners) deliver(l, { kind: "reset", reason });
   }
 
   resume(): void {
-    if (!this.closed) this.down = false;
+    if (this.closed) return;
+    this.down = false;
+    this.schedule();
   }
 ```
-- [ ] **Step 4: Run — expect PASS.** Sabotages: `reset` without `this.down = true` (the rejected subscribe resolves: red); make `pruneNow` return immediately (buffer test red). Restore.
+- [ ] **Step 4: Run — expect PASS.** Sabotages: `reset` without `this.down = true` (the rejected subscribe resolves: red); make `pruneNow` return immediately (buffer test red); drop the identity check in `off` (`entries.get(entry.key) === entry` → `entries.has(entry.key)`) → the old-unsubscribe test red; drop the generation check in the push loop → the reset-from-a-listener test red (subscribe order puts "names" after "n" in the cycle's changed list — if it does not, swap the subscribe order). Restore.
 - [ ] **Step 5: The bench** — `load/subscriptions/reactive_latency.ts`:
 ```ts
 // Commit → push latency and the useless re-run ratio of table-level invalidation (DZB-01a-3). N subscriptions,
@@ -1657,7 +1807,7 @@ for (const n of [1, 100, 1000]) {
 }
 process.exit(0);
 ```
-Run it; record `## Subscriptions (DZB-01a-3)` in `docs/BENCH.md` from its output (subscriptions, p50/p99 commit → push, re-runs, useless, ratio; the command; what it measured).
+Run it; record `## Subscriptions (DZB-01a-3)` in `docs/BENCH.md` from its output (subscriptions, p50/p99 commit → push, re-runs, useless, ratio; the command; what it measured). Also re-run `load/runtime/drizzle_overhead.ts` and record the `runtime.runQuery` rows next to 01a-2's: the delta is the price of resolving the catalog per run instead of caching it.
 - [ ] **Step 6: Full suite, check, commit** — `bun run check && bun run test`; slots 0. Commit `feat(dzb-01a-3): reset/resume, a bounded buffer; bench: reactive latency and the useless re-run ratio`.
 
 ---
