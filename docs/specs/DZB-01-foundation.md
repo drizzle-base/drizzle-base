@@ -214,9 +214,14 @@ back in time, re-keying an entry that turns volatile, and a reset during COMMIT.
 successful COMMIT (one round trip per cycle); the pool needs `max >= connections + 1`; `reset()` does not reject
 pending barriers; no bound on a cycle's or a fresh query's time; an idle-in-transaction writer pins xmin and the
 buffer is replayed whole on every registration (index it by table, RB-B3); a duplicate barrier id arriving early
-overwrites `seen`. Performance, open for the owner: the per-run catalog costs +2/+5 ms per fresh run
-(`docs/BENCH.md`); cures are one catalog query per run, one `Catalog` per cycle across lanes, or a cross-run
-cache keyed by the DDL stream's generation (needs its own spec).
+overwrites `seen`. Performance: the per-run catalog cost was mostly PLANNING, not round trips; cured by DZB-PERF-CATALOG
+(one prepared catalog statement per run, one `Catalog` per cycle; `docs/BENCH.md`, −27 % / −50 %). A cross-run cache
+keyed by the DDL stream's generation stays open (needs its own spec). Its final review found no stale answer from the prepared plan
+across DDL (probed under generic and custom plans) and fixed: an untested volatility reduction (names with mixed
+overloads, `to_timestamp`), a dollar-quote tag the text's end could complete, a malformed catalog answer leaving
+waiters pending, and a statement name that did not hash the PREPARE signature. **Deferred:** developer-authored
+plpgsql run by a query can DEALLOCATE the catalog statement (the run then fails closed) or PREPARE one under its name
+that outlives the run; no test pins that `ready` is set only after PREPARE succeeds (a wrong order fails closed).
 
 ## 0. What and why
 

@@ -88,3 +88,26 @@ snapshot, same search_path) would cut that again. **Open decision (owner):** thi
 resolving every relation, function and operator of a run in ONE catalog query (one round trip instead of one per
 lookup). Not taken here: it changes `readset` (kernel), outside this plan.
 
+## The catalog: one prepared statement per run (DZB-PERF-CATALOG, 25 Sep 2026, load avg ~3–4)
+
+A catalog lookup was not a round-trip problem: the pool never prepares (`prepare: false`), so every catalog statement
+was re-planned (EXPLAIN ANALYZE: 1.0–1.5 ms of planning against 0.64 ms of execution). Resolving every name of a run in
+one statement alone made the builder query slower (5.2 against 4.3 ms). The same statement PREPAREd once per connection
+and run with `EXECUTE` takes 0.94 ms, against 2.44 ms planned each time.
+
+A/B on `load/runtime/drizzle_overhead.ts`, three interleaved rounds, `runtime.runQuery` p50 (the fresh-run path):
+
+| Variant | prepared batch (r1 / r2 / r3) | per-name lookups (r1 / r2 / r3) | delta |
+|---|---|---|---|
+| builder | 3.011 / 3.023 / 3.039 | 4.190 / 4.131 / 4.163 | −27 % |
+| relational | 3.926 / 3.791 / 3.788 | 7.589 / 7.663 / 7.656 | −50 % |
+
+The per-name column is this branch with the `prefetch` call removed from `readSetOf` (the lookups `main` makes), run
+in the same session, alternating with the prepared build. Both columns measure warm connections: the first run on a
+connection also pays the one-time PREPARE (one round trip plus ~1–1.5 ms of planning).
+
+`load/subscriptions/reactive_latency.ts` after the change: 1 / 100 / 1 000 subscriptions, p50 6.23 / 36.01 / 320.83 ms
+(before: 7.69 / 46.11 / 370.79 ms at a higher load); the useless ratio is unchanged at 0 / 0.99 / 0.999, as expected:
+this change makes a re-run cheaper, not rarer. The cycle's lanes also share one Catalog, so a cycle issues one catalog
+statement, not one per lane.
+
