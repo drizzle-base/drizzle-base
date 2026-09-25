@@ -108,6 +108,9 @@ export interface StudioDataSource {
   are derived in the client from `references`: no contract change.
 - 25 Sep 2026 (S1 final review): `StudioErrorCode` gains `unique_violation` (a primary key already taken, on insert or
   on update — Postgres's 23505), with a conformance test. A page's `revision` only grows, across a mock reset too.
+- 25 Sep 2026 (S2): `PageRequest.withTotal` (ask for the count) and `Page.hasMore` (rows past this page, no count
+  needed). A live page is re-run on every change; counting what a filter keeps can cost more than the page, so the
+  UI counts on demand, as Drizzle Studio does (`50+` and a `count(*)` button).
 
 **The mock** (`createMockDataSource(seed)`): in-memory tables seeded with a realistic dataset (users, posts,
 comments, an enum, a json column, a view, a table without a primary key, a few thousand rows); a

@@ -36,7 +36,14 @@ export function Studio({ dataSource, pageSize = 50 }: StudioProps) {
   const req = useMemo<PageRequest | null>(
     () =>
       table
-        ? { table: { schema: table.schema, name: table.name }, filters: [], sort: [], limit: pageSize, offset }
+        ? {
+            table: { schema: table.schema, name: table.name },
+            filters: [],
+            sort: [],
+            limit: pageSize,
+            offset,
+            withTotal: true,
+          }
         : null,
     [table, pageSize, offset],
   );

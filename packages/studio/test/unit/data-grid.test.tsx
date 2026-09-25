@@ -17,7 +17,7 @@ const table: TableInfo = {
   estimatedRows: null,
 };
 const rows = Array.from({ length: 1000 }, (_, i) => ({ id: i + 1, label: i === 1 ? null : `row ${i + 1}` }));
-const page: Page = { rows, total: 1000, revision: 3 };
+const page: Page = { rows, total: 1000, hasMore: false, revision: 3 };
 
 test("headers show the column name and its Postgres type", () => {
   render(<DataGrid table={table} page={page} changed={new Set()} />);

@@ -1,6 +1,10 @@
 // What every StudioDataSource must do, whatever sits behind it. The mock passes it now; the drizzle-base adapter
 // must pass it unchanged. It runs against the relations of src/mock/datasets/conformance.ts, empty at the start of
 // each test; `open()` returns another client of the same backend (another tab).
+//
+// The suite avoids what a real database decides differently from the mock: text order depends on the collation
+// (the mock compares code points), numeric compares exactly in Postgres (the mock goes through Number), json and
+// arrays compare structurally in Postgres (the mock compares JSON text). Tests sort lowercase text and small numbers.
 import { describe, expect, test } from "bun:test";
 import {
   type Page,
@@ -26,6 +30,7 @@ const req = (over: Partial<PageRequest> = {}): PageRequest => ({
   sort: [],
   limit: 50,
   offset: 0,
+  withTotal: true,
   ...over,
 });
 
@@ -282,6 +287,55 @@ export function describeConformance(name: string, makeBackend: () => Promise<Con
       await expectCode(ds.updateRows(ITEMS, [{ key: b ?? {}, values: { id: a?.["id"] ?? null } }]), "unique_violation");
       const w = watch(ds, req());
       expect(labels(await w.latest())).toEqual(["a", "b"]);
+      w.stop();
+    });
+
+    it("without withTotal the total is null, and hasMore says whether rows follow", async (open) => {
+      const ds = await open();
+      await ds.insertRows(ITEMS, SEED);
+      const first = watch(ds, req({ limit: 2, withTotal: false }));
+      expect(await first.latest()).toMatchObject({ total: null, hasMore: true });
+      first.stop();
+      const last = watch(ds, req({ limit: 2, offset: 2, withTotal: false }));
+      expect(await last.latest()).toMatchObject({ total: null, hasMore: false });
+      last.stop();
+      const counted = watch(ds, req({ limit: 2 }));
+      expect(await counted.latest()).toMatchObject({ total: 4, hasMore: true });
+      counted.stop();
+    });
+
+    it("eq and neq with a NULL value match nothing, as in SQL", async (open) => {
+      const ds = await open();
+      await ds.insertRows(ITEMS, SEED);
+      for (const op of ["eq", "neq"] as const) {
+        const w = watch(ds, req({ filters: [{ column: "note", op, value: null }] }));
+        expect(labels(await w.latest())).toEqual([]);
+        w.stop();
+      }
+    });
+
+    it("an update or delete whose key names no row changes nothing", async (open) => {
+      const ds = await open();
+      await ds.insertRows(ITEMS, SEED);
+      await ds.updateRows(ITEMS, [{ key: { id: 999 }, values: { label: "ghost" } }]);
+      await ds.deleteRows(ITEMS, [{ id: 998 }]);
+      const w = watch(ds, req());
+      expect(labels(await w.latest())).toEqual(["alpha", "beta", "gamma", "delta"]);
+      w.stop();
+    });
+
+    it("a key that does not name exactly the primary key is invalid", async (open) => {
+      const ds = await open();
+      await expectCode(ds.updateRows(ITEMS, [{ key: { label: "alpha" }, values: { rank: 1 } }]), "invalid_value");
+      await expectCode(ds.deleteRows(ITEMS, [{}]), "invalid_value");
+    });
+
+    it("a client opened after writes sees them", async (open) => {
+      const early = await open();
+      await early.insertRows(ITEMS, [{ label: "before the late client" }]);
+      const late = await open();
+      const w = watch(late, req());
+      expect(labels(await w.latest())).toEqual(["before the late client"]);
       w.stop();
     });
 

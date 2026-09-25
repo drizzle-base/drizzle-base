@@ -28,7 +28,14 @@ function Probe({
 test("a new request starts clean: no rows from the old one, nothing marked changed", async () => {
   const ds = createMockDataSource({ dataset: conformanceDataset(), log: createMemoryLog() });
   await ds.insertRows(ITEMS, [{ label: "a" }, { label: "b" }]);
-  const req = (table: typeof ITEMS, offset = 0): PageRequest => ({ table, filters: [], sort: [], limit: 50, offset });
+  const req = (table: typeof ITEMS, offset = 0): PageRequest => ({
+    table,
+    filters: [],
+    sort: [],
+    limit: 50,
+    offset,
+    withTotal: true,
+  });
   const view = render(<Probe ds={ds} req={req(ITEMS)} table={info} />);
   expect(await screen.findByText("items:2:0")).toBeTruthy();
 

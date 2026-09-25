@@ -93,15 +93,22 @@ export interface PageRequest {
   sort: Sort[];
   limit: number;
   offset: number;
+  /**
+   * Ask for `Page.total`. Counting every row a filter keeps can cost far more than the page itself, and a page is a
+   * subscription re-run on every change: the UI asks only when it will show the number.
+   */
+  withTotal: boolean;
 }
 
 /**
- * `total` counts every row the filters keep (null when the backend will not count). `revision` identifies the data
- * the page was computed from: a page pushed because of a write carries a higher revision than any page before it.
+ * `total` counts every row the filters keep; null when `withTotal` was false (or the backend will not count).
+ * `hasMore` says whether rows exist past this page, which needs no count. `revision` identifies the data the page
+ * was computed from: a page pushed because of a write carries a higher revision than any page before it.
  */
 export interface Page {
   rows: Row[];
   total: number | null;
+  hasMore: boolean;
   revision: number;
 }
 
