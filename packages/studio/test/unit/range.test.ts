@@ -28,6 +28,10 @@ describe("cellsInRect", () => {
       { rowId: "r1", column: "b" },
     ]);
   });
+
+  test("both missing corners return an empty range", () => {
+    expect(cellsInRect({ rowId: "gone", column: "a" }, { rowId: "also-gone", column: "b" }, rows, cols)).toEqual([]);
+  });
 });
 
 describe("TSV", () => {
@@ -41,5 +45,9 @@ describe("TSV", () => {
 
   test("a trailing newline does not invent an empty row", () => {
     expect(parseTsv("a\tb\n")).toEqual([["a", "b"]]);
+  });
+
+  test("a quoted cell with an embedded newline round-trips through toTsv", () => {
+    expect(parseTsv(toTsv([["a\nb"]]))).toEqual([["a\nb"]]);
   });
 });

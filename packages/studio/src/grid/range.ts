@@ -36,46 +36,63 @@ export function toTsv(rows: string[][]): string {
   return rows.map((row) => row.map((c) => (needsQuote(c) ? quote(c) : c)).join("\t")).join("\n");
 }
 
-/** RFC-ish TSV: quotes wrap a field; `""` inside a quoted field is `"`. */
+/** RFC-ish TSV: quotes wrap a field; `""` inside a quoted field is `"`. Newlines inside quotes are cell data. */
 export function parseTsv(text: string): string[][] {
   const src = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const trimmed = src.endsWith("\n") ? src.slice(0, -1) : src;
-  if (trimmed === "") return [];
+  const body = src.endsWith("\n") ? src.slice(0, -1) : src;
+  if (body === "") return [];
+
   const rows: string[][] = [];
-  for (const line of trimmed.split("\n")) {
-    const cells: string[] = [];
-    let i = 0;
-    while (i <= line.length) {
-      if (line[i] === '"') {
-        let s = "";
-        i += 1;
-        while (i < line.length) {
-          if (line[i] === '"' && line[i + 1] === '"') {
-            s += '"';
-            i += 2;
-            continue;
-          }
-          if (line[i] === '"') {
-            i += 1;
-            break;
-          }
-          s += line[i];
-          i += 1;
+  let cells: string[] = [];
+  let i = 0;
+
+  const finishRow = () => {
+    rows.push(cells);
+    cells = [];
+  };
+
+  while (i <= body.length) {
+    if (i === body.length) {
+      if (cells.length > 0) finishRow();
+      break;
+    }
+
+    if (body[i] === '"') {
+      let s = "";
+      i += 1;
+      while (i < body.length) {
+        if (body[i] === '"' && body[i + 1] === '"') {
+          s += '"';
+          i += 2;
+          continue;
         }
-        cells.push(s);
-        if (line[i] === "\t") i += 1;
-        else if (i >= line.length) break;
-      } else {
-        const tab = line.indexOf("\t", i);
-        if (tab < 0) {
-          cells.push(line.slice(i));
+        if (body[i] === '"') {
+          i += 1;
           break;
         }
-        cells.push(line.slice(i, tab));
-        i = tab + 1;
+        s += body[i];
+        i += 1;
       }
+      cells.push(s);
+      if (body[i] === "\t") i += 1;
+      else if (body[i] === "\n") {
+        i += 1;
+        finishRow();
+      }
+    } else {
+      const tab = body.indexOf("\t", i);
+      const nl = body.indexOf("\n", i);
+      let end = body.length;
+      if (tab >= 0 && (nl < 0 || tab < nl)) end = tab;
+      else if (nl >= 0) end = nl;
+      cells.push(body.slice(i, end));
+      if (end === tab) i = tab + 1;
+      else if (end === nl) {
+        i = nl + 1;
+        finishRow();
+      } else i = body.length;
     }
-    rows.push(cells);
   }
+
   return rows;
 }
