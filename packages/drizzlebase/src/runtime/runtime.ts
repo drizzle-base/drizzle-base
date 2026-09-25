@@ -78,7 +78,7 @@ export class Runtime<S extends Record<string, unknown>> {
 	private readonly maxAttempts: number;
 
 	constructor(private readonly opts: { sql: SQL; schema: S; publication: string; maxAttempts?: number }) {
-		this.catalog = new Catalog(opts.sql, opts.publication);
+		this.catalog = new Catalog(opts.publication);
 		this.maxAttempts = opts.maxAttempts ?? 5;
 	}
 
@@ -94,9 +94,9 @@ export class Runtime<S extends Record<string, unknown>> {
 		try {
 			await conn.unsafe("begin isolation level repeatable read read only");
 			try {
-				const [{ s }] = await conn.unsafe("select pg_current_snapshot()::text as s");
+				const [{ s, sp }] = await conn.unsafe("select pg_current_snapshot()::text as s, current_setting('search_path') as sp");
 				const value = await def.handler(this.ctx(client), args);
-				const readSet = await readSetOf(client.statements, this.catalog);
+				const readSet = await readSetOf(client.statements, this.catalog, conn, sp as string);
 				await conn.unsafe("commit");
 				return { value, snapshot: parseSnapshot(s as string), readSet, statements: [...client.statements] };
 			} catch (e) {

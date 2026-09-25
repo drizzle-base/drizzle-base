@@ -1,6 +1,7 @@
 // The TABLE-level read-set of DZB-01a: which tables a query read, whether anything it read is invisible to
 // the stream (OPAQUE: any change must re-run it), and whether its result can change with no write at all
 // (volatile: never cached). Row-level precision comes in 01b/01c; this level must already never narrow.
+import type { SQL } from "bun";
 import type { CapturedTxn } from "../capture/types";
 import type { Node } from "../sql/parse";
 import type { Catalog } from "./catalog";
@@ -13,46 +14,71 @@ export interface ReadSet {
 }
 
 const READABLE = new Set(["r", "p"]);
+// Built-in functions that run SQL, or read a table named by a string argument: the tables they read never
+// appear as relations in the statement (final review #4).
+const SQL_EXECUTORS = new Set([
+	"query_to_xml", "query_to_xmlschema", "query_to_xml_and_xmlschema", "table_to_xml", "table_to_xmlschema",
+	"table_to_xml_and_xmlschema", "cursor_to_xml", "cursor_to_xmlschema", "schema_to_xml", "schema_to_xmlschema",
+	"schema_to_xml_and_xmlschema", "database_to_xml", "database_to_xmlschema", "database_to_xml_and_xmlschema", "ts_stat",
+]);
 
-export async function buildReadSet(refs: Refs, catalog: Catalog): Promise<ReadSet> {
+const add = (list: string[], x: string) => {
+	if (!list.includes(x)) list.push(x);
+};
+
+export async function buildReadSet(refs: Refs, catalog: Catalog, exec: SQL, searchPath: string): Promise<ReadSet> {
 	const rs: ReadSet = { tables: new Set(), opaque: [], volatile: [] };
 	for (const r of refs.relations) {
 		const shown = r.schema ? `${r.schema}.${r.name}` : r.name;
-		const info = await catalog.relation(r);
+		const info = await catalog.relation(r, exec, searchPath);
 		if (!info) {
 			// Only a name that resolves to nothing may be a CTE; a CTE that shadows a real table keeps the table.
 			if (!r.schema && refs.cteNames.has(r.name)) continue;
-			rs.opaque.push(`unknown relation ${shown}`);
+			add(rs.opaque, `unknown relation ${shown}`);
 			continue;
 		}
 		const full = `${info.schema}.${info.name}`;
-		if (info.relkind === "v" || info.relkind === "m") rs.opaque.push(`view ${full}`);
-		else if (!READABLE.has(info.relkind)) rs.opaque.push(`relation ${full} of kind ${info.relkind}`);
-		else if (info.rls) rs.opaque.push(`row level security on ${full}`);
-		else if (!info.published) rs.opaque.push(`${full} is not in the publication`);
-		else {
-			rs.tables.add(full);
-			for (const x of info.related) rs.tables.add(x);
+		if (info.relkind === "v" || info.relkind === "m") {
+			add(rs.opaque, `view ${full}`);
+			continue;
 		}
+		// Every member the scan reaches must be a readable table the stream carries — not only one of the family
+		// (final review #5: a publication FOR TABLE ONLY parent left the children's changes unstreamed).
+		for (const m of info.members) {
+			if (!READABLE.has(m.relkind)) add(rs.opaque, `relation ${m.name} of kind ${m.relkind}`);
+			else if (m.rls) add(rs.opaque, `row level security on ${m.name}`);
+			else if (!m.published) add(rs.opaque, `${m.name} is not in the publication`);
+			rs.tables.add(m.name);
+		}
+		for (const a of info.ancestors) rs.tables.add(a);
 	}
 	for (const f of refs.functions) {
 		const shown = f.schema ? `${f.schema}.${f.name}` : f.name;
-		const info = await catalog.fn(f);
-		if (!info) rs.opaque.push(`unknown function ${shown}`);
-		else if (info.user) rs.opaque.push(`user function ${shown}`);
-		else if (info.volatile && !rs.volatile.includes(shown)) rs.volatile.push(shown);
+		const info = await catalog.fn(f, exec, searchPath);
+		if (!info) add(rs.opaque, `unknown function ${shown}`);
+		else if (info.user) add(rs.opaque, `user function ${shown}`);
+		else {
+			if (SQL_EXECUTORS.has(f.name)) add(rs.opaque, `function ${shown} reads tables its SQL does not name`);
+			if (info.volatile) add(rs.volatile, shown);
+		}
 	}
-	for (const v of refs.valueFunctions) if (!rs.volatile.includes(v)) rs.volatile.push(v);
+	for (const o of refs.operators) {
+		const user = await catalog.operator(o, exec, searchPath);
+		const shown = o.schema ? `${o.schema}.${o.name}` : o.name;
+		if (user === null) add(rs.opaque, `unknown operator ${shown}`);
+		else if (user) add(rs.opaque, `user operator ${shown}`);
+	}
+	for (const v of refs.valueFunctions) add(rs.volatile, v);
 	return rs;
 }
 
-export async function readSetOf(stmts: readonly { stmt: Node }[], catalog: Catalog): Promise<ReadSet> {
+export async function readSetOf(stmts: readonly { stmt: Node }[], catalog: Catalog, exec: SQL, searchPath: string): Promise<ReadSet> {
 	const all: ReadSet = { tables: new Set(), opaque: [], volatile: [] };
 	for (const s of stmts) {
-		const one = await buildReadSet(collectRefs(s.stmt), catalog);
+		const one = await buildReadSet(collectRefs(s.stmt), catalog, exec, searchPath);
 		for (const t of one.tables) all.tables.add(t);
-		for (const o of one.opaque) if (!all.opaque.includes(o)) all.opaque.push(o);
-		for (const v of one.volatile) if (!all.volatile.includes(v)) all.volatile.push(v);
+		for (const o of one.opaque) add(all.opaque, o);
+		for (const v of one.volatile) add(all.volatile, v);
 	}
 	return all;
 }

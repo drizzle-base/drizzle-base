@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { functions } from "../src/runtime/functions";
 import { CommitOutcomeUnknownError, MutationAbortedError, MutationConflictError, Runtime } from "../src/runtime/runtime";
+import { testSql } from "./db";
 import { posts, schema, users, withApp } from "./fixtures/app";
 
 const { query, mutation } = functions<typeof schema>();
@@ -150,6 +151,32 @@ describe("Runtime", () => {
 			expect((await rt.runMutation(both, {})).value).toEqual(["fulfilled", "fulfilled"]);
 			const titles = (await sql0.unsafe("select title from dzb_app.posts order by title")).map((r: { title: string }) => r.title);
 			expect(titles).toEqual(["a", "b"]);
+		});
+	});
+
+	test("concurrent queries on a small pool finish even with a cold catalog (no second connection is taken)", async () => {
+		await withApp(async (_sql0, n) => {
+			const small = testSql(2);
+			try {
+				const rt = new Runtime({ sql: small, schema, publication: n.publication });
+				const q = query(async (ctx) => ctx.db.query.users.findMany({ with: { posts: true } }));
+				const all = Promise.all([rt.runQuery(q, {}), rt.runQuery(q, {})]);
+				const done = await Promise.race([all.then(() => "done"), Bun.sleep(8_000).then(() => "hung")]);
+				expect(done).toBe("done");
+			} finally {
+				await small.close();
+			}
+		});
+	}, 30_000);
+
+	test("functions that change session state are refused (a search_path set here would outlive the transaction)", async () => {
+		await withApp(async (sql0, n) => {
+			const rt = new Runtime({ sql: sql0, schema, publication: n.publication });
+			for (const text of ["select set_config('search_path', 'dzb_app', false)", "select pg_advisory_lock(42)"]) {
+				const q = query(async (ctx) => ctx.db.execute(sql.raw(text)));
+				const err = await rt.runQuery(q, {}).then(() => null, (e: unknown) => e);
+				expect(String((err as { cause?: Error })?.cause?.message ?? err)).toMatch(/session state/);
+			}
 		});
 	});
 });

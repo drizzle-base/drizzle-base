@@ -3,7 +3,16 @@
 // read-set. db.transaction() arrives here as begin(): it must become a SAVEPOINT — the real begin() committed
 // the outer transaction and changed the snapshot under the query (review A, RA-A4).
 import type { ReservedSQL } from "bun";
+import { collectRefs } from "../readset/refs";
 import { ForbiddenStatementError, type Node, type Parsed, parseStatement } from "../sql/parse";
+
+// Functions whose effect outlives the transaction on the pooled connection: a search_path set here would make
+// the next function on that connection resolve names differently from the catalog (final review #3); a session
+// advisory lock would be held by whoever reserves the connection next.
+const SESSION_STATE = new Set([
+	"set_config", "pg_advisory_lock", "pg_advisory_lock_shared", "pg_try_advisory_lock", "pg_try_advisory_lock_shared",
+	"pg_advisory_unlock", "pg_advisory_unlock_shared", "pg_advisory_unlock_all",
+]);
 
 export interface Recorded {
 	sql: string;
@@ -58,6 +67,8 @@ export class CapturingClient {
 		const parsed = parseStatement(query);
 		if (this.mode === "query" && parsed.kind !== "select")
 			throw new ForbiddenStatementError(`${parsed.kind.toUpperCase()} in a query: queries are read-only, use a mutation`);
+		for (const f of collectRefs(parsed.stmt).functions)
+			if (SESSION_STATE.has(f.name)) throw new ForbiddenStatementError(`${f.name}() changes session state, which would outlive this function's transaction`);
 		this.shared.statements.push({ sql: query, params, kind: parsed.kind, stmt: parsed.stmt });
 		return this.conn.unsafe(query, params);
 	}
