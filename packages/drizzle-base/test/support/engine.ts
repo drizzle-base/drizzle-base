@@ -1,6 +1,6 @@
 // A running engine on the test application: capture → engine.onEvent, capture failure → engine.reset.
 import type { SQL } from "bun";
-import { type CaptureNames, PgoutputCapture } from "../../src/capture";
+import { type CaptureNames, PgoutputCapture, type StreamEvent } from "../../src/capture";
 import { Runtime } from "../../src/runtime";
 import { type EngineEvent, SubscriptionEngine } from "../../src/subscriptions";
 import { schema, withApp } from "./app";
@@ -16,13 +16,19 @@ export interface EngineHarness {
 
 export async function withEngine(
   fn: (h: EngineHarness) => Promise<void>,
-  opts: { connections?: number; barrierTimeoutMs?: number; pruneEveryMs?: number } = {},
+  // streamLagMs: every stream event is delivered that much later, in order — a stream lagging behind the database,
+  // as under load. It opens the window between a commit and its delivery that barriers exist to close.
+  opts: { connections?: number; barrierTimeoutMs?: number; pruneEveryMs?: number; streamLagMs?: number } = {},
 ): Promise<void> {
   await withApp(async (sql, names) => {
     const runtime = new Runtime({ sql, schema, publication: names.publication });
-    const engine = new SubscriptionEngine({ runtime, sql, ...opts });
+    const { streamLagMs, ...engineOpts } = opts;
+    const engine = new SubscriptionEngine({ runtime, sql, ...engineOpts });
     const capture = new PgoutputCapture({ connection: pgConfig, names });
-    await capture.start({ onEvent: (e) => engine.onEvent(e), onError: (e) => engine.reset(String(e)) });
+    const deliver = streamLagMs
+      ? (e: StreamEvent) => void setTimeout(() => engine.onEvent(e), streamLagMs)
+      : (e: StreamEvent) => engine.onEvent(e);
+    await capture.start({ onEvent: deliver, onError: (e) => engine.reset(String(e)) });
     try {
       await fn({ sql, names, runtime, engine, capture });
     } finally {
