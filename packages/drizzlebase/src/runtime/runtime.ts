@@ -40,6 +40,15 @@ export class MutationConflictError extends Error {
 		super(`mutation gave up after ${attempts} attempts (SQLSTATE ${sqlState})`, { cause });
 	}
 }
+// The transaction was already aborted when the handler returned — it caught an error and carried on. Postgres
+// answers COMMIT with the tag ROLLBACK and no error, so without this check the mutation "succeeds" with nothing
+// written. A definite failure: nothing was applied.
+export class MutationAbortedError extends Error {
+	override name = "MutationAbortedError";
+	constructor() {
+		super("the mutation's transaction was aborted by an error its handler caught; nothing was written");
+	}
+}
 export class CommitOutcomeUnknownError extends Error {
 	override name = "CommitOutcomeUnknownError";
 	constructor(cause: unknown) {
@@ -81,21 +90,26 @@ export class Runtime<S extends Record<string, unknown>> {
 	async runQuery<A, R>(def: QueryDef<S, A, R>, args: A): Promise<QueryRun<R>> {
 		await loadParser();
 		const conn = await this.opts.sql.reserve();
+		const client = new CapturingClient(conn, "query");
 		try {
 			await conn.unsafe("begin isolation level repeatable read read only");
 			try {
 				const [{ s }] = await conn.unsafe("select pg_current_snapshot()::text as s");
-				const client = new CapturingClient(conn, "query");
 				const value = await def.handler(this.ctx(client), args);
 				const readSet = await readSetOf(client.statements, this.catalog);
 				await conn.unsafe("commit");
-				return { value, snapshot: parseSnapshot(s as string), readSet, statements: client.statements };
+				return { value, snapshot: parseSnapshot(s as string), readSet, statements: [...client.statements] };
 			} catch (e) {
 				await conn.unsafe("rollback").catch(() => {});
 				throw e;
 			}
 		} finally {
-			conn.release();
+			client.close();
+			try {
+				conn.release();
+			} catch {
+				// a terminated connection may refuse release; the pool discards it
+			}
 		}
 	}
 
@@ -103,11 +117,12 @@ export class Runtime<S extends Record<string, unknown>> {
 		await loadParser();
 		for (let attempt = 1; ; attempt++) {
 			const conn = await this.opts.sql.reserve();
+			const client = new CapturingClient(conn, "mutation");
 			try {
 				await conn.unsafe("begin isolation level serializable");
 				let value: R;
 				try {
-					value = await def.handler(this.ctx(new CapturingClient(conn, "mutation")), args);
+					value = await def.handler(this.ctx(client), args);
 				} catch (e) {
 					await conn.unsafe("rollback").catch(() => {});
 					const code = sqlState(e);
@@ -118,8 +133,9 @@ export class Runtime<S extends Record<string, unknown>> {
 					}
 					throw e;
 				}
+				let tag: string | undefined;
 				try {
-					await conn.unsafe("commit");
+					tag = ((await conn.unsafe("commit")) as { command?: string }).command;
 				} catch (e) {
 					const code = sqlState(e);
 					if (isServerError(e) && code && RETRYABLE.has(code)) {
@@ -131,9 +147,11 @@ export class Runtime<S extends Record<string, unknown>> {
 					if (isServerError(e) && code && !/^(08|57)/.test(code)) throw e;
 					throw new CommitOutcomeUnknownError(e);
 				}
+				if (tag === "ROLLBACK") throw new MutationAbortedError();
 				const [{ l }] = await conn.unsafe("select pg_current_wal_insert_lsn()::text as l");
 				return { value, commitLsn: l as string, attempts: attempt };
 			} finally {
+				client.close();
 				try {
 					conn.release();
 				} catch {

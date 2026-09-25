@@ -46,7 +46,7 @@ export async function buildReadSet(refs: Refs, catalog: Catalog): Promise<ReadSe
 	return rs;
 }
 
-export async function readSetOf(stmts: { stmt: Node }[], catalog: Catalog): Promise<ReadSet> {
+export async function readSetOf(stmts: readonly { stmt: Node }[], catalog: Catalog): Promise<ReadSet> {
 	const all: ReadSet = { tables: new Set(), opaque: [], volatile: [] };
 	for (const s of stmts) {
 		const one = await buildReadSet(collectRefs(s.stmt), catalog);

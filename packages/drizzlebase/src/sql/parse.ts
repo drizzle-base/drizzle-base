@@ -40,7 +40,10 @@ export function parseStatement(sqlText: string): Parsed {
 	const kind = KINDS[type];
 	if (!kind)
 		throw new ForbiddenStatementError(`${type} is not allowed in a function: only SELECT, INSERT, UPDATE and DELETE (drizzlebase owns transactions; DDL belongs to migrations)`);
-	const parsed: Parsed = { kind, stmt: node[type] as Node };
+	const stmt = node[type] as Node;
+	// SELECT … INTO parses as a SelectStmt but creates a table: DDL through the back door.
+	if (kind === "select" && stmt.intoClause) throw new ForbiddenStatementError("SELECT INTO creates a table: not allowed in a function (DDL belongs to migrations)");
+	const parsed: Parsed = { kind, stmt };
 	if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string);
 	cache.set(sqlText, parsed);
 	return parsed;

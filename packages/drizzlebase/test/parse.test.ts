@@ -23,6 +23,7 @@ describe("parseStatement", () => {
 		[";", /exactly one statement/],
 		["", /empty/],
 		["selec 1", /unparseable/],
+		["select * into dzb_app.copy from dzb_app.users", /SELECT INTO/],
 	])("refuses %p", (sqlText, reason) => {
 		expect(() => parseStatement(sqlText)).toThrow(ForbiddenStatementError);
 		expect(() => parseStatement(sqlText)).toThrow(reason);

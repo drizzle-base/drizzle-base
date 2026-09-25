@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { functions } from "../src/runtime/functions";
-import { CommitOutcomeUnknownError, MutationConflictError, Runtime } from "../src/runtime/runtime";
+import { CommitOutcomeUnknownError, MutationAbortedError, MutationConflictError, Runtime } from "../src/runtime/runtime";
 import { posts, schema, users, withApp } from "./fixtures/app";
 
 const { query, mutation } = functions<typeof schema>();
@@ -95,6 +95,61 @@ describe("Runtime", () => {
 			});
 			await expect(rt.runMutation(killsItsOwnConnection, {})).rejects.toBeInstanceOf(CommitOutcomeUnknownError);
 			expect(calls).toBe(1);
+		});
+	});
+
+	test("a handler that swallows an error leaves an aborted transaction: the mutation fails, it never reports success", async () => {
+		// Postgres answers COMMIT on an aborted transaction with the tag ROLLBACK and no error.
+		await withApp(async (sql0, n) => {
+			await sql0.unsafe(`insert into dzb_app.users(id, name) values ('${U}', 'Dan')`);
+			const rt = new Runtime({ sql: sql0, schema, publication: n.publication });
+			const swallows = mutation(async (ctx) => {
+				await ctx.db.insert(posts).values({ authorId: U, title: "should not survive" });
+				try {
+					await ctx.db.insert(users).values({ id: U, name: "duplicate key" });
+				} catch {
+					// the handler "handles" it — but the transaction is already aborted
+				}
+				return "ok";
+			});
+			await expect(rt.runMutation(swallows, {})).rejects.toBeInstanceOf(MutationAbortedError);
+			const [{ c }] = await sql0.unsafe("select count(*)::int as c from dzb_app.posts");
+			expect(c).toBe(0);
+		});
+	});
+
+	test("a statement issued after the handler returned never runs: the connection is closed to it", async () => {
+		await withApp(async (sql0, n) => {
+			await sql0.unsafe(`insert into dzb_app.users(id, name) values ('${U}', 'Dan')`);
+			const rt = new Runtime({ sql: sql0, schema, publication: n.publication });
+			let late: Promise<unknown> | null = null;
+			const leaks = mutation(async (ctx) => {
+				late = Bun.sleep(50).then(() => ctx.db.insert(posts).values({ authorId: U, title: "after return" }));
+				return "done";
+			});
+			await rt.runMutation(leaks, {});
+			const outcome = await (late as unknown as Promise<unknown>).then(() => "ran", (e: unknown) => String((e as { cause?: Error })?.cause?.message ?? e));
+			expect(outcome).toMatch(/closed/);
+			const [{ c }] = await sql0.unsafe("select count(*)::int as c from dzb_app.posts");
+			expect(c).toBe(0);
+		});
+	});
+
+	test("two db.transaction() blocks started together both land (savepoints are serialized)", async () => {
+		await withApp(async (sql0, n) => {
+			await sql0.unsafe(`insert into dzb_app.users(id, name) values ('${U}', 'Dan')`);
+			const rt = new Runtime({ sql: sql0, schema, publication: n.publication });
+			const both = mutation(async (ctx) => {
+				const r = await Promise.allSettled([
+					// a opens its savepoint first and finishes first: releasing it would also destroy b's, opened later.
+					ctx.db.transaction(async (tx) => { await tx.insert(posts).values({ authorId: U, title: "a" }); return "a"; }),
+					ctx.db.transaction(async (tx) => { await tx.insert(posts).values({ authorId: U, title: "b" }); await Bun.sleep(30); return "b"; }),
+				]);
+				return r.map((x) => x.status);
+			});
+			expect((await rt.runMutation(both, {})).value).toEqual(["fulfilled", "fulfilled"]);
+			const titles = (await sql0.unsafe("select title from dzb_app.posts order by title")).map((r: { title: string }) => r.title);
+			expect(titles).toEqual(["a", "b"]);
 		});
 	});
 });
