@@ -86,63 +86,119 @@ export function createMemoryLog(): MockLog {
 }
 
 export interface BrowserLogDeps {
-  storage: Storage;
+  indexedDB: IDBFactory;
   openChannel(name: string): BroadcastChannel;
-  locks: LockLike;
 }
 
-function browserDeps(): BrowserLogDeps {
-  return {
-    storage: localStorage,
-    openChannel: (name) => new BroadcastChannel(name),
-    locks: {
-      // Web Locks resolve with the callback's awaited value; lib.dom types it without unwrapping the promise.
-      request: <T>(name: string, callback: () => T | Promise<T>) =>
-        navigator.locks.request(name, () => callback()) as Promise<T>,
-    },
+type Message = { type: "entry"; epoch: number; entry: LogEntry } | { type: "reset"; epoch: number };
+
+const ENTRIES = "entries";
+const META = "meta";
+
+function request<T>(r: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+}
+
+function openDatabase(factory: IDBFactory, name: string): Promise<IDBDatabase> {
+  const r = factory.open(name, 1);
+  r.onupgradeneeded = () => {
+    r.result.createObjectStore(ENTRIES);
+    r.result.createObjectStore(META);
   };
+  return request(r);
 }
 
 /**
- * The log shared by every tab of one origin: entries in localStorage, commits serialised by a Web Lock, and a
- * BroadcastChannel message telling the other tabs to read what is new. A tab opened later replays the stored log.
+ * The log shared by every tab of one origin. Entries live in IndexedDB, whose transactions are consistent across
+ * tabs: a commit reads what is stored and appends inside one readwrite transaction, so sequence numbers never
+ * collide. The entry then travels in a BroadcastChannel message, because another tab may see a storage write later
+ * than the message (Chromium does, with localStorage). A tab opened later replays the stored log.
  */
-export function createBrowserLog(name: string, deps: Partial<BrowserLogDeps> = {}): MockLog {
-  const { storage, openChannel, locks } = { ...browserDeps(), ...deps };
-  const prefix = `dzb-studio-mock:${name}:`;
-  const channel = openChannel(`${prefix}commits`);
+export async function createBrowserLog(name: string, deps: Partial<BrowserLogDeps> = {}): Promise<MockLog> {
+  const factory = deps.indexedDB ?? indexedDB;
+  const openChannel = deps.openChannel ?? ((n: string) => new BroadcastChannel(n));
+  const db = await openDatabase(factory, `dzb-studio-mock:${name}`);
+  const channel = openChannel(`dzb-studio-mock:${name}`);
   const listeners = new Set<() => void>();
+  let entries: LogEntry[] = []; // entries[i].seq === i + 1
+  let epoch = 0;
+
   const notify = () => {
     for (const l of [...listeners]) l();
   };
-  channel.onmessage = notify;
-  const head = () => Number(storage.getItem(`${prefix}head`) ?? "0");
-  const epoch = () => storage.getItem(`${prefix}epoch`) ?? "0";
-  const announce = () => {
-    channel.postMessage("commit");
-    // BroadcastChannel never delivers to its sender: this tab hears its own commit here.
-    queueMicrotask(notify);
+
+  /** Adopts what the store holds, if it is newer than what this tab has. Returns whether anything changed. */
+  const absorb = (storedEpoch: number, stored: LogEntry[]): boolean => {
+    if (storedEpoch !== epoch) {
+      epoch = storedEpoch;
+      entries = stored;
+      return true;
+    }
+    if (stored.length > entries.length) {
+      entries = stored;
+      return true;
+    }
+    return false;
   };
+
+  const pull = async () => {
+    const tx = db.transaction([ENTRIES, META], "readonly");
+    const [storedEpoch, stored] = await Promise.all([
+      request(tx.objectStore(META).get("epoch")),
+      request(tx.objectStore(ENTRIES).getAll()),
+    ]);
+    if (absorb((storedEpoch as number | undefined) ?? 0, stored as LogEntry[])) notify();
+  };
+
+  channel.onmessage = (ev: MessageEvent<Message>) => {
+    const m = ev.data;
+    if (m.type === "entry" && m.epoch === epoch && m.entry.seq === entries.length + 1) {
+      entries.push(m.entry);
+      notify();
+      return;
+    }
+    if (m.type === "entry" && m.epoch === epoch && m.entry.seq <= entries.length) return;
+    // A gap, a reset, or a new epoch: the store has everything committed before the message was sent.
+    void pull().catch(() => undefined); // a failed read is retried by the next message or commit
+  };
+
+  await pull();
+
   return {
-    epoch,
-    readSince(seq) {
-      const out: LogEntry[] = [];
-      for (let s = seq + 1, h = head(); s <= h; s++) {
-        const raw = storage.getItem(`${prefix}entry:${s}`);
-        if (raw === null) break;
-        out.push(JSON.parse(raw) as LogEntry);
-      }
-      return out;
-    },
+    epoch: () => String(epoch),
+    readSince: (seq) => entries.slice(seq),
     commit: (build) =>
-      locks.request(`${prefix}lock`, () => {
-        const e = build();
-        if (!e) return null;
-        const seq = head() + 1;
-        storage.setItem(`${prefix}entry:${seq}`, JSON.stringify({ ...e, seq }));
-        storage.setItem(`${prefix}head`, String(seq));
-        announce();
-        return seq;
+      new Promise<number | null>((resolve, reject) => {
+        const tx = db.transaction([ENTRIES, META], "readwrite");
+        let appended: LogEntry | null = null;
+        let failure: unknown = null;
+        const storedEpoch = tx.objectStore(META).get("epoch");
+        const stored = tx.objectStore(ENTRIES).getAll();
+        stored.onsuccess = () => {
+          absorb((storedEpoch.result as number | undefined) ?? 0, stored.result as LogEntry[]);
+          try {
+            const e = build();
+            if (e) {
+              appended = { ...e, seq: entries.length + 1 };
+              tx.objectStore(ENTRIES).put(appended, appended.seq);
+            }
+          } catch (err) {
+            failure = err;
+            tx.abort();
+          }
+        };
+        tx.oncomplete = () => {
+          if (appended) {
+            entries.push(appended);
+            channel.postMessage({ type: "entry", epoch, entry: appended } satisfies Message);
+            queueMicrotask(notify);
+          }
+          resolve(appended?.seq ?? null);
+        };
+        tx.onabort = () => reject(failure ?? tx.error ?? new Error("commit aborted"));
       }),
     onCommit(listener) {
       listeners.add(listener);
@@ -151,15 +207,27 @@ export function createBrowserLog(name: string, deps: Partial<BrowserLogDeps> = {
       };
     },
     reset: () =>
-      locks.request(`${prefix}lock`, () => {
-        for (let s = 1, h = head(); s <= h; s++) storage.removeItem(`${prefix}entry:${s}`);
-        storage.setItem(`${prefix}head`, "0");
-        storage.setItem(`${prefix}epoch`, String(Number(epoch()) + 1));
-        announce();
+      new Promise<void>((resolve, reject) => {
+        const tx = db.transaction([ENTRIES, META], "readwrite");
+        const storedEpoch = tx.objectStore(META).get("epoch");
+        storedEpoch.onsuccess = () => {
+          const next = ((storedEpoch.result as number | undefined) ?? 0) + 1;
+          tx.objectStore(ENTRIES).clear();
+          tx.objectStore(META).put(next, "epoch");
+          tx.oncomplete = () => {
+            epoch = next;
+            entries = [];
+            channel.postMessage({ type: "reset", epoch } satisfies Message);
+            queueMicrotask(notify);
+            resolve();
+          };
+        };
+        tx.onabort = () => reject(tx.error ?? new Error("reset aborted"));
       }),
     close() {
       listeners.clear();
       channel.close();
+      db.close();
     },
   };
 }

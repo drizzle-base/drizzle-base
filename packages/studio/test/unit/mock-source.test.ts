@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { IDBFactory } from "fake-indexeddb";
 import type { Page, PageRequest, StudioDataSource } from "../../src/contract";
 import {
   conformanceDataset,
   createBrowserLog,
-  createLocalLocks,
   createMemoryLog,
   createMockDataSource,
   demoDataset,
@@ -92,12 +92,13 @@ describe("mock data source", () => {
   });
 
   test("concurrent inserts from two tabs get distinct serial ids", async () => {
-    // Two browser logs are two tabs: the other tab's commit arrives by BroadcastChannel, later than the next build
-    // may run, so a build must catch up from storage itself.
     const name = `t${crypto.randomUUID().replaceAll("-", "")}`;
-    const locks = createLocalLocks();
-    const a = createMockDataSource({ dataset: demoDataset(1), log: createBrowserLog(name, { locks }) });
-    const b = createMockDataSource({ dataset: demoDataset(1), log: createBrowserLog(name, { locks }) });
+    const idb = new IDBFactory();
+    // Separate channels: neither hears the other, so only catching up from the store inside the commit prevents a clash.
+    const tab = (id: string) =>
+      createBrowserLog(name, { indexedDB: idb, openChannel: (n) => new BroadcastChannel(`${n}:${id}`) });
+    const a = createMockDataSource({ dataset: demoDataset(1), log: await tab("a") });
+    const b = createMockDataSource({ dataset: demoDataset(1), log: await tab("b") });
     const posts = { schema: "public", name: "posts" };
     const author = demoDataset(1).tables[0]?.rows[0]?.["id"] ?? null;
     const keys = await Promise.all([

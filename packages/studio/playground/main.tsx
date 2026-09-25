@@ -6,7 +6,7 @@ import { createBrowserLog, createMockDataSource, demoDataset } from "../src/mock
 import { DevPanel } from "./dev-panel";
 
 const latencyMs = Number(new URLSearchParams(location.search).get("latency") ?? "0");
-const log = createBrowserLog("playground");
+const log = await createBrowserLog("playground");
 const dataSource = createMockDataSource({ dataset: demoDataset(1), log, latencyMs, seed: Date.now() });
 window.__dzbMock = dataSource;
 

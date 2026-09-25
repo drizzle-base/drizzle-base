@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { createBrowserLog, createLocalLocks, createMemoryLog, type LogEntry, type MockLog } from "../../src/mock/log";
+import { IDBFactory } from "fake-indexeddb";
+import { createBrowserLog, createMemoryLog, type LogEntry, type MockLog } from "../../src/mock/log";
 
 const T = { schema: "public", name: "t" };
 const entry = (label: string): Omit<LogEntry, "seq"> => ({
@@ -73,42 +74,92 @@ describe("memory log", () => {
 });
 
 describe("browser log", () => {
-  // Two instances on one storage and one channel name are two tabs; happy-dom has no navigator.locks, so the tabs
-  // share an in-process lock (the real Web Locks path runs in the Playwright test).
-  const twoTabs = () => {
-    const name = `t${crypto.randomUUID().replaceAll("-", "")}`;
-    const locks = createLocalLocks();
-    const a = createBrowserLog(name, { locks });
-    const b = createBrowserLog(name, { locks });
+  // Two logs on one IndexedDB and one channel name are two tabs. IndexedDB here is fake-indexeddb, one factory per
+  // "browser"; the real one runs in the Playwright test.
+  const unique = () => `t${crypto.randomUUID().replaceAll("-", "")}`;
+  const twoTabs = async () => {
+    const name = unique();
+    const idb = new IDBFactory();
+    const a = await createBrowserLog(name, { indexedDB: idb });
+    const b = await createBrowserLog(name, { indexedDB: idb });
     return { a, b };
   };
+  const heardBy = (log: MockLog) => {
+    let n = 0;
+    log.onCommit(() => n++);
+    return async (count: number) => {
+      for (let i = 0; i < 100 && n < count; i++) await tick();
+      return n;
+    };
+  };
 
-  test("a commit in one tab is announced to the other, which reads it from storage", async () => {
-    const { a, b } = twoTabs();
-    let heard = 0;
-    b.onCommit(() => heard++);
+  test("a commit in one tab is announced to the other, which can read it", async () => {
+    const { a, b } = await twoTabs();
+    const heard = heardBy(b);
     expect(await a.commit(() => entry("a"))).toBe(1);
-    for (let i = 0; i < 50 && heard === 0; i++) await tick();
-    expect(heard).toBe(1);
+    expect(await heard(1)).toBe(1);
     expect(labels(b)).toEqual(["a"]);
     a.close();
     b.close();
   });
 
-  test("sequence numbers continue across tabs", async () => {
-    const { a, b } = twoTabs();
-    expect(await a.commit(() => entry("a"))).toBe(1);
-    expect(await b.commit(() => entry("b"))).toBe(2);
-    expect(labels(a)).toEqual(["a", "b"]);
+  test("the entry travels in its message: a tab whose store view lags still applies it", async () => {
+    // Chromium shows another tab's storage writes asynchronously; here tab B's store never sees tab A's write at all.
+    const name = unique();
+    const a = await createBrowserLog(name, { indexedDB: new IDBFactory() });
+    const b = await createBrowserLog(name, { indexedDB: new IDBFactory() });
+    const heard = heardBy(b);
+    await a.commit(() => entry("a"));
+    expect(await heard(1)).toBe(1);
+    expect(labels(b)).toEqual(["a"]);
+    a.close();
+    b.close();
+  });
+
+  test("commits from two tabs at once get distinct, consecutive sequence numbers", async () => {
+    // The store is the serial point, not the messages: these tabs share IndexedDB but hear nothing from each other.
+    const name = unique();
+    const idb = new IDBFactory();
+    const a = await createBrowserLog(name, { indexedDB: idb, openChannel: (n) => new BroadcastChannel(`${n}:a`) });
+    const b = await createBrowserLog(name, { indexedDB: idb, openChannel: (n) => new BroadcastChannel(`${n}:b`) });
+    const seqs = await Promise.all(Array.from({ length: 10 }, (_, i) => (i % 2 ? a : b).commit(() => entry(`e${i}`))));
+    expect([...seqs].sort((x, y) => (x ?? 0) - (y ?? 0))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    a.close();
+    b.close();
+  });
+
+  test("a tab opened later replays the stored log", async () => {
+    const name = unique();
+    const idb = new IDBFactory();
+    const a = await createBrowserLog(name, { indexedDB: idb });
+    await a.commit(() => entry("a"));
+    await a.commit(() => entry("b"));
+    const late = await createBrowserLog(name, { indexedDB: idb });
+    expect(labels(late)).toEqual(["a", "b"]);
+    a.close();
+    late.close();
+  });
+
+  test("a build that throws commits nothing", async () => {
+    const { a, b } = await twoTabs();
+    await expect(
+      a.commit(() => {
+        throw new Error("nope");
+      }),
+    ).rejects.toThrow("nope");
+    expect(await b.commit(() => entry("x"))).toBe(1);
     a.close();
     b.close();
   });
 
   test("a reset in one tab empties the log for both and changes the epoch", async () => {
-    const { a, b } = twoTabs();
+    const { a, b } = await twoTabs();
+    const heard = heardBy(b);
     await a.commit(() => entry("a"));
+    expect(await heard(1)).toBe(1);
     const before = b.epoch();
     await a.reset();
+    expect(await heard(2)).toBe(2);
     expect(b.readSince(0)).toEqual([]);
     expect(b.epoch()).not.toBe(before);
     a.close();
