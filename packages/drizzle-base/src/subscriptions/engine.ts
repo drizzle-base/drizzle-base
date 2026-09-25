@@ -12,6 +12,7 @@ import { emitBarrier, lsnToBigInt, type StreamEvent } from "../capture";
 import {
   isTransient,
   type MutationDef,
+  type MutationOptions,
   parseSnapshot,
   type QueryDef,
   type Runtime,
@@ -22,9 +23,11 @@ import { Registry } from "./registry";
 import { stableHash } from "./stable";
 import { contains, low32, type Visibility, visibilityOf } from "./xid";
 
+// provisional: a subscriber's FIRST value, given while the entry is dirty — older than commits the engine has
+// already applied. That subscriber is guaranteed one more event after the entry's next re-run, changed or not.
 export type EngineEvent<R> =
-  | { kind: "value"; cycle: number | null; value: R }
-  | { kind: "error"; cycle: number | null; error: unknown }
+  | { kind: "value"; cycle: number | null; value: R; provisional?: true }
+  | { kind: "error"; cycle: number | null; error: unknown; provisional?: true }
   | { kind: "reset"; reason: string };
 
 export interface EngineStats {
@@ -46,7 +49,7 @@ export class EngineDownError extends Error {
 export class CommittedUnconfirmedError extends Error {
   override name = "CommittedUnconfirmedError";
   constructor(
-    readonly commitLsn: string,
+    readonly commitLsn: string | null,
     readonly value: unknown,
     cause: unknown,
   ) {
@@ -64,6 +67,7 @@ interface CacheEntry<S extends Record<string, unknown>> {
   last: EngineEvent<unknown>;
   visibility: Visibility; // the snapshot the subscribers' current value comes from
   listeners: Set<Listener>;
+  waiting: Set<Listener>; // got a provisional first value; owed an event after the next re-run
   transientTries: number;
 }
 
@@ -96,6 +100,7 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
   >();
   private readonly inflight = new Set<number>(); // tickets of fresh queries not registered yet (start order)
   private readonly cycleListeners = new Set<(id: number) => void>();
+  private readonly resetListeners = new Set<(reason: string) => void>();
   private ticket = 0;
   private started = 0;
   private generation = 0;
@@ -128,8 +133,20 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
     return this.buffer.size;
   }
 
+  // Live cache entries: what a server's cleanup is tested against.
+  get size(): number {
+    return this.entries.size;
+  }
+
   // Every completed cycle, whether or not it pushed anything to a given subscriber: a client waiting for "a
   // transition at or after cycle N" (read-your-writes) needs to hear about cycles that changed none of its queries.
+  // Every reset, told once — including to a server whose connection holds no subscription (and so no listener)
+  // but waits for a mutation's cycle, which a reset during that cycle would otherwise strand.
+  onReset(listener: (reason: string) => void): () => void {
+    this.resetListeners.add(listener);
+    return () => this.resetListeners.delete(listener);
+  }
+
   onCycleComplete(listener: (id: number) => void): () => void {
     this.cycleListeners.add(listener);
     return () => this.cycleListeners.delete(listener);
@@ -153,12 +170,18 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
       entry = await this.open(shared, def, structuredClone(args));
     const l = listener as Listener;
     entry.listeners.add(l);
-    deliver(l, entry.last);
+    // A first value is current only if nothing the engine has applied is missing from it: a fresh open whose replay
+    // dirtied it, or a joiner on an entry being re-run or waiting for one, gets it marked provisional (01a-4a I1).
+    if (this.registry.isDirty(entry.key) && entry.last.kind !== "reset") {
+      entry.waiting.add(l);
+      deliver(l, { ...entry.last, provisional: true });
+    } else deliver(l, entry.last);
     let done = false;
     return () => {
       if (done) return;
       done = true;
       entry.listeners.delete(l);
+      entry.waiting.delete(l);
       // Identity, not key: after a reset (or a re-key) the key may belong to another entry.
       if (entry.listeners.size === 0 && this.entries.get(entry.key) === entry) {
         this.entries.delete(entry.key);
@@ -189,6 +212,7 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
           last: { kind: "value", cycle: null, value: r.value },
           visibility,
           listeners: new Set(),
+          waiting: new Set(),
           transientTries: 0,
         };
         this.entries.set(key, entry);
@@ -230,15 +254,19 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
   // commit (its entries are dirty); the first cycle that starts after that exports a snapshot containing the commit.
   // The reply names that cycle; the client resolves when it has received a transition at or after it — a slow
   // re-run delays the transition, never the reply. A confirmation failure is not a mutation failure.
-  async mutate<A, R>(def: MutationDef<S, A, R>, args: A): Promise<{ value: R; cycle: number; commitLsn: string }> {
-    const run = await this.opts.runtime.runMutation(def, args);
+  async mutate<A, R>(
+    def: MutationDef<S, A, R>,
+    args: A,
+    opts: MutationOptions<R> = {},
+  ): Promise<{ value: R; encoded?: unknown; cycle: number; commitLsn: string | null }> {
+    const run = await this.opts.runtime.runMutation(def, args, opts);
     try {
       if (this.down || this.closed) throw new EngineDownError();
       await this.barrier();
       const cycle = this.started + 1;
       this.forced = true;
       this.schedule();
-      return { value: run.value, cycle, commitLsn: run.commitLsn };
+      return { value: run.value, encoded: run.encoded, cycle, commitLsn: run.commitLsn };
     } catch (e) {
       throw new CommittedUnconfirmedError(run.commitLsn, run.value, e);
     }
@@ -258,6 +286,7 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
     for (const w of this.cycleWaiters) w.reject(new EngineDownError());
     this.cycleWaiters = [];
     for (const l of listeners) deliver(l, { kind: "reset", reason });
+    for (const l of this.resetListeners) deliver(l, reason);
   }
 
   resume(): void {
@@ -305,6 +334,8 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
   }
 
   private async barrier(): Promise<void> {
+    // close() rejects the barriers it can see; one registered after it would wait for the full timeout.
+    if (this.closed) throw new EngineDownError("engine closed");
     const id = crypto.randomUUID();
     let resolve!: () => void;
     let reject!: (e: unknown) => void;
@@ -323,6 +354,7 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
       await Promise.race([
         (async () => {
           w.expected = lsnToBigInt(await emitBarrier(this.opts.sql, id));
+          if (this.closed) throw new EngineDownError("engine closed");
           if (w.seen === w.expected) w.resolve();
           await seen;
         })(),
@@ -392,6 +424,7 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
         }
       if (transient) throw new Error("a re-run failed transiently: the cycle is retried whole");
       const changed: CacheEntry<S>[] = [];
+      const settled: CacheEntry<S>[] = []; // re-run this cycle with provisional subscribers waiting
       for (const [lane, chunk] of chunks.entries())
         for (const [i, entry] of chunk.entries()) {
           const r = results[lane]?.[i];
@@ -409,6 +442,7 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
           }
           this.registry.register(entry.key, r.readSet, S, this.buffer);
           entry.visibility = S;
+          if (entry.waiting.size) settled.push(entry);
           const hash = r.ok ? stableHash(r.value) : `error:${String(r.error)}`;
           if (hash === entry.hash) {
             this.stats.uselessReruns++;
@@ -431,6 +465,20 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
           this.stats.pushes++;
           deliver(l, entry.last);
         }
+      // A waiting subscriber that the push above did not reach (the value did not change) still learns that its
+      // value is now current, with this cycle's id; one that it did reach is simply settled. (A joiner that arrives
+      // during this cycle's COMMIT can get the pushed value right after its own first value: a harmless repeat.)
+      for (const entry of settled) {
+        const waiting = [...entry.waiting];
+        entry.waiting.clear();
+        if (changed.includes(entry)) continue;
+        for (const l of waiting) {
+          if (gen !== this.generation) return;
+          if (!entry.listeners.has(l)) continue;
+          this.stats.pushes++;
+          deliver(l, entry.last.kind === "reset" ? entry.last : { ...entry.last, cycle: id });
+        }
+      }
       for (const l of this.cycleListeners) deliver(l, id);
       this.cycleWaiters = this.cycleWaiters.filter((w) => {
         if (w.after >= id) return true;

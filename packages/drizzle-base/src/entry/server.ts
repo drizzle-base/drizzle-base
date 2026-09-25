@@ -10,6 +10,7 @@ export {
   ensureCapture,
   type PgConnection,
   PgoutputCapture,
+  recreateSlot,
   type StreamEvent,
 } from "../capture";
 export type { Catalog, ReadSet } from "../readset";
@@ -28,5 +29,18 @@ export {
   type Recorded,
   Runtime,
   type Snapshot,
+  type StandardSchemaV1,
 } from "../runtime";
+export {
+  type AnyDef,
+  type ApiTree,
+  createHandler,
+  type DrizzleBase,
+  DrizzleBaseError,
+  defineApi,
+  type HandlerOptions,
+  type StartOptions,
+  startDrizzleBase,
+} from "../server";
 export { ForbiddenStatementError } from "../sql";
+export { CommittedUnconfirmedError, EngineDownError, type EngineEvent, SubscriptionEngine } from "../subscriptions";
