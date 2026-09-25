@@ -89,7 +89,8 @@ select (select coalesce(json_agg(r), '[]') from rels r) as rels,
 // statement on every run cost more than its round trips (1.0–1.5 ms of planning against 0.64 ms of execution,
 // measured). A catalog statement is safe to prepare: it reads system catalogs, whose shape never changes. The name
 // carries a hash of the text, so a changed batch never meets an old plan on a long-lived connection.
-export const CATALOG_STATEMENT = `dzb_catalog_${createHash("sha256").update(BATCH).digest("hex").slice(0, 12)}`;
+const PREPARED_SIGNATURE = `(jsonb, text) as ${BATCH}`;
+export const CATALOG_STATEMENT = `dzb_catalog_${createHash("sha256").update(PREPARED_SIGNATURE).digest("hex").slice(0, 12)}`;
 
 // Whether this connection already holds CATALOG_STATEMENT. The runtime reads it in the statement it sends first
 // (no extra round trip); prefetch sets it once it has prepared.
@@ -99,11 +100,14 @@ export interface PreparedState {
 
 // EXECUTE takes no bind parameters, so the payload travels as a literal. A dollar quote has no escapes, so it does
 // not depend on standard_conforming_strings; its tag is random and never one that occurs in the text, so the text
-// cannot close it early. The only way text enters the prepared path.
-export function dollarQuote(text: string): string {
+// cannot close it early: the first occurrence of the tag after the opening one must be the closing one, which
+// also refuses a tag the text's last characters would complete ("…$dzb_x" + "$dzb_x$"). The only way text enters
+// the prepared path. `nextTag` exists for the tests.
+const randomTag = () => `$dzb_${randomBytes(6).toString("hex")}$`;
+export function dollarQuote(text: string, nextTag: () => string = randomTag): string {
   for (;;) {
-    const tag = `$dzb_${randomBytes(6).toString("hex")}$`;
-    if (!text.includes(tag)) return `${tag}${text}${tag}`;
+    const tag = nextTag();
+    if (`${text}${tag}`.indexOf(tag) === text.length) return `${tag}${text}${tag}`;
   }
 }
 
@@ -189,6 +193,22 @@ export class Catalog {
       for (const x of [...rels, ...fns, ...ops]) x.reject(e);
       throw e;
     }
+    try {
+      this.settle(row, rels, fns, ops);
+    } catch (e) {
+      // A malformed answer must not leave a waiter pending forever (a cycle's other lanes await these entries):
+      // reject what is still unsettled — a reject after a resolve is a no-op.
+      for (const x of [...rels, ...fns, ...ops]) x.reject(e);
+      throw e;
+    }
+  }
+
+  private settle(
+    row: BatchRow,
+    rels: Pending<RelationInfo | null>[],
+    fns: Pending<FunctionInfo | null>[],
+    ops: Pending<boolean | null>[],
+  ): void {
     const relById = new Map(row.rels.map((r) => [r.i, r]));
     for (const [i, x] of rels.entries()) {
       const r = relById.get(i);
@@ -222,7 +242,7 @@ export class Catalog {
       return row as BatchRow;
     }
     if (!prepared.ready) {
-      await exec.unsafe(`prepare ${CATALOG_STATEMENT}(jsonb, text) as ${BATCH}`).simple();
+      await exec.unsafe(`prepare ${CATALOG_STATEMENT}${PREPARED_SIGNATURE}`).simple();
       prepared.ready = true;
     }
     const [row] = await exec

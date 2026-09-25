@@ -216,7 +216,12 @@ pending barriers; no bound on a cycle's or a fresh query's time; an idle-in-tran
 buffer is replayed whole on every registration (index it by table, RB-B3); a duplicate barrier id arriving early
 overwrites `seen`. Performance: the per-run catalog cost was mostly PLANNING, not round trips; cured by DZB-PERF-CATALOG
 (one prepared catalog statement per run, one `Catalog` per cycle; `docs/BENCH.md`, −27 % / −50 %). A cross-run cache
-keyed by the DDL stream's generation stays open (needs its own spec).
+keyed by the DDL stream's generation stays open (needs its own spec). Its final review found no stale answer from the prepared plan
+across DDL (probed under generic and custom plans) and fixed: an untested volatility reduction (names with mixed
+overloads, `to_timestamp`), a dollar-quote tag the text's end could complete, a malformed catalog answer leaving
+waiters pending, and a statement name that did not hash the PREPARE signature. **Deferred:** developer-authored
+plpgsql run by a query can DEALLOCATE the catalog statement (the run then fails closed) or PREPARE one under its name
+that outlives the run; no test pins that `ready` is set only after PREPARE succeeds (a wrong order fails closed).
 
 ## 0. What and why
 

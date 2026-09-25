@@ -102,6 +102,10 @@ A/B on `load/runtime/drizzle_overhead.ts`, three interleaved rounds, `runtime.ru
 | builder | 3.011 / 3.023 / 3.039 | 4.190 / 4.131 / 4.163 | −27 % |
 | relational | 3.926 / 3.791 / 3.788 | 7.589 / 7.663 / 7.656 | −50 % |
 
+The per-name column is this branch with the `prefetch` call removed from `readSetOf` (the lookups `main` makes), run
+in the same session, alternating with the prepared build. Both columns measure warm connections: the first run on a
+connection also pays the one-time PREPARE (one round trip plus ~1–1.5 ms of planning).
+
 `load/subscriptions/reactive_latency.ts` after the change: 1 / 100 / 1 000 subscriptions, p50 6.23 / 36.01 / 320.83 ms
 (before: 7.69 / 46.11 / 370.79 ms at a higher load); the useless ratio is unchanged at 0 / 0.99 / 0.999, as expected:
 this change makes a re-run cheaper, not rarer. The cycle's lanes also share one Catalog, so a cycle issues one catalog

@@ -29,10 +29,19 @@ test("dollarQuote round-trips any text through Postgres unchanged", async () => 
   }
 });
 
-test("dollarQuote never reuses a tag that occurs in the text", () => {
-  for (let i = 0; i < 200; i++) {
-    const quoted = dollarQuote("$dzb_ $q$");
-    const tag = quoted.slice(0, quoted.indexOf("$", 1) + 1);
-    expect(quoted.slice(tag.length, -tag.length)).not.toContain(tag);
+test("dollarQuote retries a tag found in the text, or one the text's end would complete early", async () => {
+  // The first tag occurs in the text; the second is completed by the text's last characters followed by the
+  // closing tag ("…$dzb_b" + "$dzb_b$" holds "$dzb_b$" one byte early); the third is safe.
+  const text = "a $dzb_a$ b $dzb_b";
+  const tags = ["$dzb_a$", "$dzb_b$", "$dzb_c$"];
+  const quoted = dollarQuote(text, () => tags.shift() ?? "$dzb_z$");
+  expect(quoted).toBe(`$dzb_c$${text}$dzb_c$`);
+  expect(tags).toEqual([]); // the premise: both unsafe tags were drawn and refused
+  const sql = testSql(1);
+  try {
+    const [{ t }] = await sql.unsafe(`select ${quoted}::text as t`).simple();
+    expect(t).toBe(text);
+  } finally {
+    await sql.close();
   }
 });

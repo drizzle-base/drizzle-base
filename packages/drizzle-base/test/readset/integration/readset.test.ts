@@ -207,6 +207,8 @@ describe("prefetch resolves exactly what the per-name loaders resolve", () => {
     `select lower(name), dzb_app.lower(name), pg_catalog.lower(name), now(), dzb_app.post_count(id) from dzb_app.users`,
     `select 1 === 2, 1 operator(dzb_ops.===) 2, 1 operator(dzb_app.===) 2, 3 between 1 and 4, 'a' || 'b'`,
     `select query_to_xml('select 1', true, false, ''), random(), current_date from dzb_app.users`,
+    // names whose overloads differ in volatility: one non-immutable overload makes the name volatile
+    `select to_timestamp(1), extract(year from now()), date_part('year', now()), lower(name) from dzb_app.users`,
     `select 1`,
   ];
   const norm = (r: ReadSet) => ({ tables: [...r.tables].sort(), opaque: r.opaque, volatile: r.volatile });
@@ -226,6 +228,7 @@ describe("prefetch resolves exactly what the per-name loaders resolve", () => {
             );
             const state = mode === "prepared" ? { ready: ready as boolean } : undefined;
             let differed = 0;
+            const volatileNames = new Set<string>();
             for (const text of CORPUS) {
               const stmt = parseStatement(text).stmt;
               const batched = await readSetOf([{ stmt }], new Catalog(n.publication), conn, sp as string, state);
@@ -257,9 +260,12 @@ describe("prefetch resolves exactly what the per-name loaders resolve", () => {
                   info: await ref.operator(o, conn, sp as string),
                 });
               if (single.opaque.length || single.volatile.length) differed++;
+              for (const v of batched.volatile) volatileNames.add(v);
             }
             expect(differed).toBeGreaterThan(5); // the premise: the corpus exercises the widening paths
             if (state) expect(state.ready).toBe(true); // the premise: the prepared path really ran
+            // the premise of the volatility case: a name with an immutable AND a stable overload counts as volatile
+            expect(volatileNames.has("to_timestamp")).toBe(true);
           } finally {
             await conn.unsafe("reset search_path");
             conn.release();
@@ -315,4 +321,29 @@ describe("prefetch resolves exactly what the per-name loaders resolve", () => {
       }
     });
   });
+});
+
+test("a malformed catalog answer rejects every waiter instead of leaving them pending", async () => {
+  class Broken extends Catalog {
+    protected override async issue(): Promise<never> {
+      return { rels: null, fns: [], ops: [] } as never;
+    }
+  }
+  const c = new Broken("pub");
+  const refs = collectRefs(parseStatement("select * from dzb_app.users").stmt);
+  const exec = (() => {
+    throw new Error("the per-name loader must not be reached");
+  }) as unknown as SQL;
+  const first = c.prefetch([refs], exec, "sp");
+  const waiter = c.relation(refs.relations[0] as NonNullable<(typeof refs.relations)[0]>, exec, "sp");
+  const settled = (p: Promise<unknown>) =>
+    Promise.race([
+      p.then(
+        () => "resolved",
+        () => "rejected",
+      ),
+      Bun.sleep(1_000).then(() => "pending"),
+    ]);
+  expect(await settled(first)).toBe("rejected");
+  expect(await settled(waiter)).toBe("rejected");
 });
