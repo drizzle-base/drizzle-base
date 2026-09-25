@@ -30,7 +30,7 @@ const USERS = { schema: "public", name: "users" };
 const firstPage = (ds: StudioDataSource, r: Partial<PageRequest> = {}) =>
   new Promise<Page>((resolve, reject) => {
     const stop = ds.subscribePage(
-      { table: USERS, filters: [], sort: [], limit: 50, offset: 0, ...r },
+      { table: USERS, filters: [], sort: [], limit: 50, offset: 0, withTotal: true, ...r },
       (p) => {
         stop();
         resolve(p);
@@ -47,7 +47,7 @@ describe("mock data source", () => {
     const psql = createMockDataSource({ dataset: demoDataset(1), log });
     const pages: Page[] = [];
     tab.subscribePage(
-      { table: USERS, filters: [], sort: [], limit: 5, offset: 0 },
+      { table: USERS, filters: [], sort: [], limit: 5, offset: 0, withTotal: true },
       (p) => pages.push(p),
       () => {},
     );
@@ -116,7 +116,7 @@ describe("mock data source", () => {
     const other = createMockDataSource({ dataset: demoDataset(1), log });
     const pages: Page[] = [];
     other.subscribePage(
-      { table: USERS, filters: [], sort: [], limit: 1, offset: 0 },
+      { table: USERS, filters: [], sort: [], limit: 1, offset: 0, withTotal: true },
       (p) => pages.push(p),
       () => {},
     );
@@ -144,14 +144,14 @@ describe("mock data source", () => {
     const ds = createMockDataSource({ dataset: demoDataset(1), log });
     const pages: Page[] = [];
     ds.subscribePage(
-      { table: USERS, filters: [], sort: [], limit: 5, offset: 0 },
+      { table: USERS, filters: [], sort: [], limit: 5, offset: 0, withTotal: true },
       (p) => pages.push(p),
       () => {},
     );
     await tick();
     const invoices: Page[] = [];
     ds.subscribePage(
-      { table: { schema: "billing", name: "invoices" }, filters: [], sort: [], limit: 1, offset: 0 },
+      { table: { schema: "billing", name: "invoices" }, filters: [], sort: [], limit: 1, offset: 0, withTotal: true },
       (p) => invoices.push(p),
       () => {},
     );

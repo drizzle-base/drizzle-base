@@ -1,40 +1,39 @@
-import {
-  type ColumnDef,
-  columnSizingFeature,
-  columnVisibilityFeature,
-  tableFeatures,
-  useTable,
-} from "@tanstack/react-table";
+import { type ColumnDef, tableFeatures, useTable } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useMemo, useRef } from "react";
-import type { CellValue, ColumnInfo, Page, Row, TableInfo } from "../contract";
+import type { CellValue, Page, Row, Sort, TableInfo } from "../contract";
 import { cellKey, formatCell, rowIdOf } from "../studio/format";
+import type { LaidOutColumn } from "../studio/prefs";
+import { type HeaderSortAction, sortPosition } from "../view";
+import { HeaderCell } from "./header-cell";
 
 const ROW_HEIGHT = 32;
-const COLUMN_WIDTH = 200;
-const features = tableFeatures({ columnSizingFeature, columnVisibilityFeature });
+const features = tableFeatures({});
 
 export interface DataGridProps {
   table: TableInfo;
   page: Page;
   changed: ReadonlySet<string>;
+  /** Visible columns in display order, with widths (see layoutColumns). */
+  columns: LaidOutColumn[];
+  sort: Sort[];
+  onSort(column: string, action: HeaderSortAction): void;
+  onResize(column: string, width: number, commit: boolean): void;
 }
 
-export function DataGrid({ table, page, changed }: DataGridProps) {
-  const byName = useMemo(() => new Map<string, ColumnInfo>(table.columns.map((c) => [c.name, c])), [table]);
-  const columns = useMemo<ColumnDef<typeof features, Row, unknown>[]>(
+export function DataGrid({ table, page, changed, columns, sort, onSort, onResize }: DataGridProps) {
+  const defs = useMemo<ColumnDef<typeof features, Row, unknown>[]>(
     () =>
-      table.columns.map((c) => ({
-        id: c.name,
-        accessorFn: (r: Row) => r[c.name] ?? null,
-        header: c.name,
-        size: COLUMN_WIDTH,
+      columns.map(({ column }) => ({
+        id: column.name,
+        accessorFn: (r: Row) => r[column.name] ?? null,
+        header: column.name,
       })),
-    [table],
+    [columns],
   );
   const grid = useTable({
     features,
-    columns,
+    columns: defs,
     data: page.rows,
     getRowId: (r, i) => rowIdOf(table.primaryKey, r, i),
   });
@@ -46,7 +45,11 @@ export function DataGrid({ table, page, changed }: DataGridProps) {
     estimateSize: () => ROW_HEIGHT,
     overscan: 12,
   });
-  const width = grid.getVisibleLeafColumns().reduce((w, c) => w + c.getSize(), 0);
+  const width = columns.reduce((w, c) => w + c.width, 0);
+
+  if (columns.length === 0) {
+    return <p className="p-4 text-sm text-muted-foreground">All columns are hidden. Show some from Columns.</p>;
+  }
 
   return (
     // biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot
@@ -55,7 +58,7 @@ export function DataGrid({ table, page, changed }: DataGridProps) {
       role="grid"
       tabIndex={0}
       aria-rowcount={rows.length + 1}
-      aria-colcount={table.columns.length}
+      aria-colcount={columns.length}
       className="relative h-full overflow-auto font-mono text-[13px] outline-none"
     >
       {/* biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot */}
@@ -66,19 +69,16 @@ export function DataGrid({ table, page, changed }: DataGridProps) {
         className="sticky top-0 z-10 flex border-b bg-background"
         style={{ width }}
       >
-        {grid.getHeaderGroups()[0]?.headers.map((h, i) => (
-          // biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot
-          <div
-            key={h.id}
-            role="columnheader"
-            tabIndex={-1}
-            aria-colindex={i + 1}
-            className="flex h-8 shrink-0 items-center gap-1.5 overflow-hidden border-r px-2"
-            style={{ width: h.column.getSize() }}
-          >
-            <span className="truncate font-semibold">{h.column.id}</span>
-            <span className="truncate text-[11px] text-muted-foreground">{byName.get(h.column.id)?.pgType}</span>
-          </div>
+        {columns.map((c, i) => (
+          <HeaderCell
+            key={c.column.name}
+            index={i}
+            column={c.column}
+            width={c.width}
+            sorted={sortPosition(sort, c.column.name)}
+            onSort={(action) => onSort(c.column.name, action)}
+            onResize={(w, commit) => onResize(c.column.name, w, commit)}
+          />
         ))}
       </div>
       <div className="relative" style={{ height: virtual.getTotalSize(), width }}>
@@ -95,7 +95,7 @@ export function DataGrid({ table, page, changed }: DataGridProps) {
               className="absolute left-0 flex border-b hover:bg-muted/60"
               style={{ height: ROW_HEIGHT, width, transform: `translateY(${item.start}px)` }}
             >
-              {row.getVisibleCells().map((cell, i) => {
+              {row.getAllCells().map((cell, i) => {
                 const value = cell.getValue() as CellValue;
                 const isChanged = changed.has(cellKey(row.id, cell.column.id));
                 return (
@@ -109,7 +109,7 @@ export function DataGrid({ table, page, changed }: DataGridProps) {
                     data-null={value === null || undefined}
                     data-changed={isChanged || undefined}
                     className="flex shrink-0 items-center overflow-hidden border-r px-2 whitespace-nowrap data-changed:animate-cell-flash data-null:text-muted-foreground"
-                    style={{ width: cell.column.getSize() }}
+                    style={{ width: columns[i]?.width }}
                   >
                     <span className="truncate">{formatCell(value)}</span>
                   </div>

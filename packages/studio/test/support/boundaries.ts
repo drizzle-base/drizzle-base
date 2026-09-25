@@ -48,13 +48,6 @@ export function collectSources(dirs: string[]): SourceFile[] {
       else if (/\.(ts|tsx|js|jsx|mjs|cjs)$/.test(entry.name)) out.push({ path, source: readFileSync(path, "utf8") });
     }
   };
-  for (const dir of dirs) {
-    try {
-      walk(dir);
-    } catch (e) {
-      // playground/ appears in Task 11; a missing folder has nothing to check.
-      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-    }
-  }
+  for (const dir of dirs) walk(dir);
   return out;
 }

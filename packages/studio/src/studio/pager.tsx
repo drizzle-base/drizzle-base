@@ -6,13 +6,14 @@ export interface PagerProps {
   limit: number;
   shown: number;
   total: number | null;
+  hasMore: boolean;
   onOffsetChange(offset: number): void;
 }
 
-export function Pager({ offset, limit, shown, total, onOffsetChange }: PagerProps) {
-  const of = total ?? "?";
-  const label = shown === 0 ? `0 of ${of}` : `${offset + 1} - ${offset + shown} of ${of}`;
-  const hasNext = total === null ? shown === limit : offset + limit < total;
+export function Pager({ offset, limit, shown, total, hasMore, onOffsetChange }: PagerProps) {
+  const upto = offset + shown;
+  const of = total !== null ? String(total) : hasMore ? `${upto}+` : String(upto);
+  const label = shown === 0 ? `0 of ${of}` : `${offset + 1} - ${upto} of ${of}`;
   return (
     <div className="flex items-center gap-1">
       <Button
@@ -31,7 +32,7 @@ export function Pager({ offset, limit, shown, total, onOffsetChange }: PagerProp
         variant="outline"
         size="icon-sm"
         aria-label="Next page"
-        disabled={!hasNext}
+        disabled={!hasMore}
         onClick={() => onOffsetChange(offset + limit)}
       >
         <ChevronRight />
