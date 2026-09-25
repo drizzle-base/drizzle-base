@@ -29,6 +29,8 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-cell-live: var(--cell-live);
+  --color-edit: var(--edit);
+  --color-edit-foreground: var(--edit-foreground);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -68,8 +70,11 @@
   --input: oklch(0.93 0 0);
   --ring: oklch(0.8 0.005 285);
   --radius: 0.5rem;
-  /* A push landed here: green, so it is never confused with a pending edit (amber, later slices). */
+  /* A push landed here: green, so it is never confused with a pending edit (amber). */
   --cell-live: oklch(0.93 0.08 155);
+  /* A pending edit: amber, as in Drizzle Studio; never confused with a live push (green). */
+  --edit: oklch(0.97 0.05 85);
+  --edit-foreground: oklch(0.5 0.13 60);
 }
 
 .dark {
@@ -92,6 +97,8 @@
   --input: oklch(0.3 0 0);
   --ring: oklch(0.45 0 0);
   --cell-live: oklch(0.36 0.07 155);
+  --edit: oklch(0.34 0.07 75);
+  --edit-foreground: oklch(0.9 0.1 85);
 }
 
 @layer base {

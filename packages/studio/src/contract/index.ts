@@ -57,6 +57,19 @@ export type Row = Record<string, CellValue>;
 /** Primary-key column → value. */
 export type RowKey = Record<string, CellValue>;
 
+/** An update. `expected` holds the values of the changed columns as the editor last saw them: if the row no longer
+ * has them (someone else changed it, or it is gone), the write is refused with code "conflict". */
+export interface RowUpdate {
+  key: RowKey;
+  values: Row;
+  expected?: Row;
+}
+
+export interface Edits {
+  inserts: Row[];
+  updates: RowUpdate[];
+}
+
 export type FilterOp =
   | "eq"
   | "neq"
@@ -120,6 +133,7 @@ export type StudioErrorCode =
   | "unknown_column"
   | "not_null"
   | "unique_violation"
+  | "conflict"
   | "invalid_value";
 
 export class StudioDataSourceError extends Error {
@@ -128,6 +142,8 @@ export class StudioDataSourceError extends Error {
   constructor(
     readonly code: StudioErrorCode,
     message: string,
+    /** The row a conflict (or another row-level failure) is about. */
+    readonly key?: RowKey,
   ) {
     super(message);
   }
@@ -145,6 +161,8 @@ export interface StudioDataSource {
   /** Omitted columns take their default (or NULL). Resolves with each new row's key, in order. */
   insertRows(table: TableRef, rows: Row[]): Promise<RowKey[]>;
   deleteRows(table: TableRef, keys: RowKey[]): Promise<void>;
+  /** One atomic write: every insert and update, or none. Resolves with the inserted rows' keys, in order. */
+  applyEdits(table: TableRef, edits: Edits): Promise<{ inserted: RowKey[] }>;
 }
 
 export function tableId(t: TableRef): string {

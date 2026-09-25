@@ -1,10 +1,12 @@
 import {
   type CellValue,
   type ColumnKind,
+  type Edits,
   type Page,
   type PageRequest,
   type Row,
   type RowKey,
+  type RowUpdate,
   type StudioDataSource,
   StudioDataSourceError,
   type TableInfo,
@@ -107,6 +109,12 @@ export function createMockDataSource(opts: MockOptions): MockDataSource {
         for (const c of op.changes)
           for (const r of t.rows) if (matchesKey(r, c.key)) Object.assign(r, structuredClone(c.values));
         break;
+      case "edit":
+        t.rows.push(...structuredClone(op.rows));
+        t.serial = maxSerial(t.def, op.rows, t.serial);
+        for (const c of op.changes)
+          for (const r of t.rows) if (matchesKey(r, c.key)) Object.assign(r, structuredClone(c.values));
+        break;
       case "delete":
         t.rows = t.rows.filter((r) => !op.keys.some((k) => matchesKey(r, k)));
         break;
@@ -200,6 +208,44 @@ export function createMockDataSource(opts: MockOptions): MockDataSource {
   const taken = (t: LiveTable, key: string): StudioDataSourceError =>
     new StudioDataSourceError("unique_violation", `"${tableId(t.def.info)}" already has a row with key ${key}`);
 
+  const pkOf = (t: LiveTable, row: Row): RowKey =>
+    Object.fromEntries(t.def.info.primaryKey.map((k) => [k, row[k] ?? null]));
+
+  /** Validates an update against the caught-up table: columns, NOT NULL, a key that stays unique, `expected`. */
+  const checkUpdate = (t: LiveTable, c: RowUpdate) => {
+    checkKey(t, c.key);
+    checkValues(t, c.values);
+    const rows = t.rows.filter((r) => matchesKey(r, c.key));
+    if (c.expected) {
+      const label = JSON.stringify(c.key);
+      const row = rows[0];
+      if (!row) throw new StudioDataSourceError("conflict", `row ${label} is gone: deleted elsewhere`, c.key);
+      for (const [column, v] of Object.entries(c.expected)) {
+        if (!same(row[column], v)) {
+          throw new StudioDataSourceError("conflict", `"${column}" of row ${label} was changed elsewhere`, c.key);
+        }
+      }
+    }
+    if (!t.def.info.primaryKey.some((k) => Object.hasOwn(c.values, k))) return;
+    for (const row of rows) {
+      const k = keyOf(t, { ...row, ...c.values });
+      if (t.rows.some((other) => other !== row && keyOf(t, other) === k)) throw taken(t, k);
+    }
+  };
+
+  /** Materialises inserts (defaults, NOT NULL) and refuses a key that is taken, by the table or the batch. */
+  const materializeAll = (t: LiveTable, rows: Row[]): Row[] => {
+    const serial = { next: t.serial };
+    const full = rows.map((r) => materialize(t, r, serial));
+    const seen = new Set(t.rows.map((r) => keyOf(t, r)));
+    for (const r of full) {
+      const k = keyOf(t, r);
+      if (seen.has(k)) throw taken(t, k);
+      seen.add(k);
+    }
+    return full;
+  };
+
   const defaultValue = (d: MockDefault, kind: ColumnKind, serial: { next: number }): CellValue => {
     if (typeof d === "object") return structuredClone(d.value);
     switch (d) {
@@ -286,15 +332,7 @@ export function createMockDataSource(opts: MockOptions): MockDataSource {
     async updateRows(ref, changes) {
       await commit(() => {
         const t = writable(ref);
-        for (const c of changes) {
-          checkKey(t, c.key);
-          checkValues(t, c.values);
-          if (!t.def.info.primaryKey.some((k) => Object.hasOwn(c.values, k))) continue;
-          for (const row of t.rows.filter((r) => matchesKey(r, c.key))) {
-            const k = keyOf(t, { ...row, ...c.values });
-            if (t.rows.some((other) => other !== row && keyOf(t, other) === k)) throw taken(t, k);
-          }
-        }
+        for (const c of changes) checkUpdate(t, c);
         return changes.length === 0 ? null : { kind: "update", table: refOf(ref), changes: structuredClone(changes) };
       }, "studio");
     },
@@ -303,18 +341,28 @@ export function createMockDataSource(opts: MockOptions): MockDataSource {
       let keys: RowKey[] = [];
       await commit(() => {
         const t = writable(ref);
-        const serial = { next: t.serial };
-        const full = rows.map((r) => materialize(t, r, serial));
-        const seen = new Set(t.rows.map((r) => keyOf(t, r)));
-        for (const r of full) {
-          const k = keyOf(t, r);
-          if (seen.has(k)) throw taken(t, k);
-          seen.add(k);
-        }
-        keys = full.map((r) => Object.fromEntries(t.def.info.primaryKey.map((k) => [k, r[k] ?? null])));
+        const full = materializeAll(t, rows);
+        keys = full.map((r) => pkOf(t, r));
         return full.length === 0 ? null : { kind: "insert", table: refOf(ref), rows: full };
       }, "studio");
       return keys;
+    },
+
+    async applyEdits(ref, edits: Edits) {
+      let inserted: RowKey[] = [];
+      await commit(() => {
+        const t = writable(ref);
+        for (const u of edits.updates) checkUpdate(t, u);
+        const rows = materializeAll(t, edits.inserts);
+        inserted = rows.map((r) => pkOf(t, r));
+        if (rows.length === 0 && edits.updates.length === 0) return null;
+        const changes = edits.updates.map(({ key, values }) => ({
+          key: structuredClone(key),
+          values: structuredClone(values),
+        }));
+        return { kind: "edit", table: refOf(ref), rows, changes };
+      }, "studio");
+      return { inserted };
     },
 
     async deleteRows(ref, keys) {

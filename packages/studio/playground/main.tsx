@@ -1,5 +1,5 @@
 import "../src/styles.css";
-import { StrictMode } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Studio } from "../src";
 import { createBrowserLog, createMockDataSource, demoDataset } from "../src/mock";
@@ -13,7 +13,22 @@ window.__dzbMock = dataSource;
 
 function App() {
   const { view, notices, onViewChange } = useUrlView();
-  return <Studio dataSource={dataSource} view={view} onViewChange={onViewChange} notices={notices} />;
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+  return (
+    <Studio
+      dataSource={dataSource}
+      view={view}
+      onViewChange={onViewChange}
+      notices={notices}
+      onDirtyChange={setDirty}
+    />
+  );
 }
 
 const root = document.getElementById("root");

@@ -3,7 +3,8 @@ import type { Row, RowKey, TableRef, Unsubscribe } from "../contract";
 export type Op =
   | { kind: "insert"; table: TableRef; rows: Row[] }
   | { kind: "update"; table: TableRef; changes: { key: RowKey; values: Row }[] }
-  | { kind: "delete"; table: TableRef; keys: RowKey[] };
+  | { kind: "delete"; table: TableRef; keys: RowKey[] }
+  | { kind: "edit"; table: TableRef; rows: Row[]; changes: { key: RowKey; values: Row }[] };
 
 export interface LogEntry {
   seq: number;

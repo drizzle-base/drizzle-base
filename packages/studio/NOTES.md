@@ -89,3 +89,28 @@ pending cells, a blue selected-cell border with a 8% fill, a row-hover colour, a
   (order, hidden, widths) and the last view per table stay in localStorage. The studio never touches the URL.
 - Filter values are typed by column: select lists for boolean and enum, validation for numbers and uuids; an invalid
   value blocks Apply and says why; a link's unusable filter is shown as ignored, never dropped silently.
+
+## Editing (S3a, observed 25 Sep 2026, editing the probe database)
+
+- Save is immediate: no confirmation, no SQL preview, no toast; the pending bar disappears.
+- A failed save opens a modal with the failing SQL and Postgres's message (`duplicate key … users_email_key`),
+  Close / Open failed in SQL; the edit stays pending.
+- **Saving is not atomic**: with one valid and one invalid edit, the valid one was written and the invalid one
+  left the pending list without a word.
+- Add record: a row at the top with `DEFAULT`/`NULL`; the INSERT spells `default` for defaulted columns and `null`
+  for the rest; no client-side check, so NOT NULL surfaces as a server error.
+- Delete: selecting rows shows "Delete N records"; a confirmation ("Confirm deletion of selected records"); one
+  `DELETE … WHERE id = … OR id = …`; immediate, outside the pending edits; a foreign-key error in the same modal.
+- Leaving a table with pending edits asks "Unsaved changes — discard them?" (Discard / Close).
+- Expand Row opens a side form of every column (label + type; selects for enum/boolean; a code editor for
+  json/array) — S3b.
+
+## Decisions taken from this (S3a)
+
+- A save is one atomic `applyEdits`; a failure writes nothing and keeps every edit.
+- Optimistic concurrency: an update carries the values it started from; a cell changed elsewhere is shown live
+  ("changed elsewhere", Keep mine / Use theirs) and a stale save is refused (`conflict`), naming the row.
+- Drafts are kept per table in memory: switching tables or going Back loses nothing; the sidebar marks tables with
+  pending edits; closing the tab warns; `onDirtyChange` lets a host block its own navigation.
+- Required values of a new row are checked before saving; enum/boolean offer NULL only on nullable columns.
+- Delete stays immediate with a confirmation, as in Drizzle Studio.
