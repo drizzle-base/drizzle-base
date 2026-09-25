@@ -2,7 +2,7 @@
 // analyzer dropped a conjunct it did not understand and the tables inside it with it (NOT EXISTS, NOT IN
 // (subquery), OR … IN (subquery), CASE: review A, RA-A1). A plain walk cannot drop anything: every RangeVar
 // node, wherever it sits, is reported (spec P-A1).
-import type { Node } from "../sql/parse";
+import type { Node } from "../sql";
 
 export interface RelationRef {
 	schema: string | null;

@@ -2,8 +2,7 @@
 // the stream (OPAQUE: any change must re-run it), and whether its result can change with no write at all
 // (volatile: never cached). Row-level precision comes in 01b/01c; this level must already never narrow.
 import type { SQL } from "bun";
-import type { CapturedTxn } from "../capture/types";
-import type { Node } from "../sql/parse";
+import type { Node } from "../sql";
 import type { Catalog } from "./catalog";
 import { collectRefs, type Refs } from "./refs";
 
@@ -83,7 +82,15 @@ export async function readSetOf(stmts: readonly { stmt: Node }[], catalog: Catal
 	return all;
 }
 
-export function touches(rs: ReadSet, txn: CapturedTxn): boolean {
+// The part of a committed transaction touches() reads. Structural on purpose: readset does not depend on
+// capture, and a CapturedTxn satisfies it as is.
+export interface TxnTables {
+	ddl: boolean;
+	changes: readonly { table: string }[];
+	wholeTables: ReadonlySet<string>;
+}
+
+export function touches(rs: ReadSet, txn: TxnTables): boolean {
 	if (txn.ddl) return true;
 	const changedSomething = txn.changes.length > 0 || txn.wholeTables.size > 0;
 	if (rs.opaque.length) return changedSomething;

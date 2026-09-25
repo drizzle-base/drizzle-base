@@ -7,7 +7,7 @@
 // server re-sends it on the next start — at-least-once, which is harmless: re-invalidating is only cost.
 import { LogicalReplicationService, type Pgoutput, PgoutputPlugin } from "pg-logical-replication";
 import type { SQL } from "bun";
-import { log } from "../log";
+import { log } from "./log";
 import { emitBarrier } from "./barrier";
 import { TxnAssembler } from "./assembler";
 import { assertCaptureNames, type CaptureNames } from "./setup";

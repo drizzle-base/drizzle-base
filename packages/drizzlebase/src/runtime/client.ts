@@ -3,8 +3,8 @@
 // read-set. db.transaction() arrives here as begin(): it must become a SAVEPOINT — the real begin() committed
 // the outer transaction and changed the snapshot under the query (review A, RA-A4).
 import type { ReservedSQL } from "bun";
-import { collectRefs } from "../readset/refs";
-import { ForbiddenStatementError, type Node, type Parsed, parseStatement } from "../sql/parse";
+import { collectRefs } from "../readset";
+import { ForbiddenStatementError, type Node, type Parsed, parseStatement } from "../sql";
 
 // Functions whose effect outlives the transaction on the pooled connection: a search_path set here would make
 // the next function on that connection resolve names differently from the catalog (final review #3); a session

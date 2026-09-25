@@ -6,9 +6,8 @@
 // (P-M7): the write may have landed.
 import type { SQL } from "bun";
 import { drizzle } from "drizzle-orm/bun-sql";
-import { Catalog } from "../readset/catalog";
-import { type ReadSet, readSetOf } from "../readset/readset";
-import { loadParser } from "../sql/parse";
+import { Catalog, type ReadSet, readSetOf } from "../readset";
+import { loadParser } from "../sql";
 import { CapturingClient, type Recorded } from "./client";
 import type { Ctx, MutationDef, QueryDef } from "./functions";
 
