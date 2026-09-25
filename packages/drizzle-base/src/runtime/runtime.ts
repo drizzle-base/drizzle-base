@@ -6,7 +6,7 @@
 // (P-M7): the write may have landed.
 import type { SQL } from "bun";
 import { drizzle } from "drizzle-orm/bun-sql";
-import { Catalog, type ReadSet, readSetOf } from "../readset";
+import { CATALOG_STATEMENT, Catalog, type ReadSet, readSetOf } from "../readset";
 import { loadParser } from "../sql";
 import { CapturingClient, type Recorded } from "./client";
 import type { Ctx, MutationDef, QueryDef } from "./functions";
@@ -80,16 +80,25 @@ export type SnapshotResult =
   | { ok: true; value: unknown; readSet: ReadSet }
   | { ok: false; error: unknown; readSet: ReadSet };
 const SNAPSHOT_ID = /^[0-9A-F]+-[0-9A-F]+-[0-9]+$/i;
+// What a run's read-set resolution needs from its connection, read in the statement each run sends first: the
+// schemas names resolve in (with the session's temp schema) and whether the connection already holds the prepared
+// catalog statement.
+const READ_CONTEXT =
+  "select current_schemas(true)::text as sp, exists (select 1 from pg_prepared_statements where name = $1) as ready";
+const READ_CONTEXT_WITH_SNAPSHOT =
+  "select pg_current_snapshot()::text as s, current_schemas(true)::text as sp, exists (select 1 from pg_prepared_statements where name = $1) as ready";
 
 export function parseSnapshot(text: string): Snapshot {
   const [xmin = "0", xmax = "0", xip = ""] = text.split(":");
   return { text, xmin: BigInt(xmin), xmax: BigInt(xmax), xip: xip ? xip.split(",").map(BigInt) : [] };
 }
 
-// The catalog is resolved per run and memoised only within it (one connection, one transaction): a lookup made
-// in one run is never served to another. Name resolution itself (the parser, to_regclass) reads Postgres's latest
-// catalog, not the imported snapshot, so this alone does not make a read-set exact across a concurrent DDL: that
-// rests on the subscription layer, where a streamed DDL dirties every entry and the replay catches the rest.
+// The catalog is memoised per run — or per cycle, shared by the cycle's lanes, which all import the same snapshot
+// — and never across them: a lookup made for one run or cycle is never served to another. One statement resolves
+// every name a run needs (Catalog.prefetch). Keys carry current_schemas(true), which names the session's temp
+// schema too. Name resolution itself (the parser, to_regclass) reads Postgres's latest catalog, not the imported
+// snapshot, so this alone does not make a read-set exact across a concurrent DDL: that rests on the subscription
+// layer, where a streamed DDL dirties every entry and the replay catches the rest.
 export class Runtime<S extends Record<string, unknown>> {
   private readonly maxAttempts: number;
 
@@ -115,11 +124,11 @@ export class Runtime<S extends Record<string, unknown>> {
     try {
       await conn.unsafe("begin isolation level repeatable read read only");
       try {
-        const [{ s, sp }] = await conn.unsafe(
-          "select pg_current_snapshot()::text as s, current_setting('search_path') as sp",
-        );
+        const [{ s, sp, ready }] = await conn.unsafe(READ_CONTEXT_WITH_SNAPSHOT, [CATALOG_STATEMENT]);
         const value = await def.handler(this.ctx(client), args);
-        const readSet = await readSetOf(client.statements, new Catalog(this.opts.publication), conn, sp as string);
+        const readSet = await readSetOf(client.statements, this.createCatalog(), conn, sp as string, {
+          ready: ready as boolean,
+        });
         await conn.unsafe("commit");
         return { value, snapshot: parseSnapshot(s as string), readSet, statements: [...client.statements] };
       } catch (e) {
@@ -138,7 +147,17 @@ export class Runtime<S extends Record<string, unknown>> {
 
   // Runs each call in the exported snapshot, one transaction on one connection, a savepoint per call (P-M10). A
   // failing call does not break the others; a read-set that cannot be resolved widens to OPAQUE for that call.
-  async runInSnapshot(snapshotId: string, calls: SnapshotCall<S>[]): Promise<SnapshotResult[]> {
+  // One Catalog for a whole cycle: its lanes share the exported snapshot, and a name one lane resolves is not
+  // looked up again by the others.
+  createCatalog(): Catalog {
+    return new Catalog(this.opts.publication);
+  }
+
+  async runInSnapshot(
+    snapshotId: string,
+    calls: SnapshotCall<S>[],
+    catalog: Catalog = this.createCatalog(),
+  ): Promise<SnapshotResult[]> {
     if (!SNAPSHOT_ID.test(snapshotId)) throw new Error(`not a snapshot id: ${JSON.stringify(snapshotId)}`);
     await loadParser();
     const conn = await this.opts.sql.reserve();
@@ -147,8 +166,8 @@ export class Runtime<S extends Record<string, unknown>> {
       await conn.unsafe("begin isolation level repeatable read read only");
       try {
         await conn.unsafe(`set transaction snapshot '${snapshotId}'`);
-        const [{ sp }] = await conn.unsafe("select current_setting('search_path') as sp");
-        const catalog = new Catalog(this.opts.publication);
+        const [{ sp, ready }] = await conn.unsafe(READ_CONTEXT, [CATALOG_STATEMENT]);
+        const prepared = { ready: ready as boolean }; // one connection for the whole lane
         for (const call of calls) {
           const client = new CapturingClient(conn, "query");
           await conn.unsafe("savepoint dzb_call");
@@ -164,7 +183,7 @@ export class Runtime<S extends Record<string, unknown>> {
           }
           let readSet: ReadSet;
           try {
-            readSet = await readSetOf(client.statements, catalog, conn, sp as string);
+            readSet = await readSetOf(client.statements, catalog, conn, sp as string, prepared);
           } catch (e) {
             readSet = { tables: new Set(), opaque: [`read-set resolution failed: ${String(e)}`], volatile: [] };
           }

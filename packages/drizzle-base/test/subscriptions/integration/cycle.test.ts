@@ -1,6 +1,7 @@
 // Races inside a cycle, each made deterministic by holding or failing the cycle at an exact statement.
 import { expect, test } from "bun:test";
 import { count, eq, sql } from "drizzle-orm";
+import { Catalog } from "../../../src/readset";
 import { functions } from "../../../src/runtime";
 import { comments, posts, type schema, users } from "../../support/app";
 import { recorder, withEngine } from "../../support/engine";
@@ -220,4 +221,34 @@ test("a reset during a cycle's COMMIT pushes nothing after the subscribers were 
       restore();
     }
   });
+});
+
+test("a cycle's lanes share one Catalog: one catalog statement for the whole cycle", async () => {
+  const proto = Catalog.prototype as unknown as { issue: (...a: unknown[]) => Promise<unknown> };
+  const real = proto.issue;
+  let issued = 0;
+  proto.issue = function (this: unknown, ...a: unknown[]) {
+    issued++;
+    return real.apply(this, a);
+  };
+  try {
+    await withEngine(
+      async ({ sql: pool, engine }) => {
+        const byAuthor = query(async (ctx, a: { id: string }) =>
+          (await ctx.db.select().from(posts).where(eq(posts.authorId, a.id))).map((p) => p.title),
+        );
+        for (let i = 1; i <= 4; i++)
+          await engine.subscribe("byAuthor", byAuthor, { id: `0190a000-0000-7000-8000-00000000000${i}` }, () => {});
+        issued = 0;
+        const before = engine.stats.reruns;
+        await pool.unsafe(`insert into dzb_app.posts(author_id, title) values ('${U}', 'wakes all four')`);
+        await engine.flush();
+        expect(engine.stats.reruns - before).toBe(4); // the premise: four re-runs, spread over four lanes
+        expect(issued).toBe(1);
+      },
+      { connections: 4 },
+    );
+  } finally {
+    proto.issue = real;
+  }
 });

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { SQL } from "bun";
 import { sql } from "drizzle-orm";
+import { CATALOG_STATEMENT } from "../../../src/readset";
 import { functions, isTransient, Runtime } from "../../../src/runtime";
 import { posts, schema, users, withApp } from "../../support/app";
 import { pgConfig, testSql } from "../../support/db";
@@ -101,4 +102,30 @@ test("isTransient: connection, conflict, resource and operator classes — never
   expect(isTransient(new Error("no users allowed"))).toBe(false); // a handler's own throw is deterministic
   for (const c of ["22012", "42703", "23505"]) expect(isTransient(e(c))).toBe(false);
   expect(isTransient({ cause: e("40001") })).toBe(true);
+});
+
+// The catalog batch is PREPAREd once per connection. A second PREPARE on the same connection would fail (42P05),
+// so two runs on a one-connection pool both succeeding proves the runtime knew the connection was ready.
+test("the runtime prepares the catalog statement once per connection and reuses it", async () => {
+  await withApp(async (pool, n) => {
+    const one = testSql(1);
+    try {
+      const rt = new Runtime({ sql: one, schema, publication: n.publication });
+      const count = functions<typeof schema>().query(async (ctx) => (await ctx.db.select().from(users)).length);
+      expect((await rt.runQuery(count, {})).readSet.tables).toEqual(new Set(["dzb_app.users"]));
+      expect((await rt.runQuery(count, {})).readSet.tables).toEqual(new Set(["dzb_app.users"]));
+      const [prepared] = await one.unsafe("select count(*)::int as n from pg_prepared_statements where name = $1", [
+        CATALOG_STATEMENT,
+      ]);
+      expect(prepared?.n).toBe(1);
+      // A cycle's lane on that same connection takes the prepared path too (it would PREPARE again and fail).
+      const lane = await exported(pool, async (sid) => {
+        const [r] = await rt.runInSnapshot(sid, [async (ctx) => (await ctx.db.select().from(posts)).length]);
+        return r;
+      });
+      expect(lane?.readSet).toEqual({ tables: new Set(["dzb_app.posts"]), opaque: [], volatile: [] });
+    } finally {
+      await one.close();
+    }
+  });
 });
