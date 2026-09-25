@@ -1,5 +1,49 @@
 # drizzle-base — architecture
 
+## The monorepo
+
+The repository holds everything drizzle-base builds — the model of Convex's `npm-packages/`: one core package
+with subpaths (`convex`), add-ons as separate scoped packages (`@convex-dev/ratelimiter`, `@convex-dev/workos`,
+…), and private apps that are never published (`dashboard`, `docs`).
+
+| Folder | npm name | What it is | Status |
+|---|---|---|---|
+| `packages/drizzle-base` | `drizzle-base` | **The core** — the real code, not a facade: capture, read-set, runtime, subscriptions, server, client, react | DZB-01a |
+| `packages/studio` | `@drizzle-base/studio` | The realtime data browser (Drizzle Studio's experience, live across tabs and for writes from anywhere): standalone (`bunx @drizzle-base/studio`) or embedded as React components | planned (after 01a-4) |
+| `packages/auth` | `@drizzle-base/auth` | Auth component | planned |
+| `packages/storage` | `@drizzle-base/storage` | File storage component | planned |
+| `packages/workflow` | `@drizzle-base/workflow` | Durable workflows component | planned |
+| `apps/dashboard` | — (private) | The admin that mounts the studio and other panels | planned |
+| `apps/demo` | — (private) | Example app; where the end-to-end with Drizzle Studio runs | DZB-01a-4 |
+| `apps/docs` | — (private) | The documentation site | planned |
+
+The folder of a published package carries its npm name without the scope. A planned package exists as an empty
+folder (`.gitkeep`) until its phase starts; it gets a `package.json` only then.
+
+**Rules between packages** (enforced when the second package ships code):
+
+- **The core is one package.** Server, client and React are always installed together at one version, so they are
+  subpaths of `drizzle-base`, not packages. A separate package exists only for what is optional and has its own
+  dependencies or release rhythm (a UI, a component).
+- **Every add-on declares `drizzle-base` as a `peerDependency`** (like every `@convex-dev/*` does with `convex`):
+  two copies of the core in one app would break silently, exactly like two copies of `drizzle-orm`.
+- **An add-on imports only the core's public entries** (`drizzle-base/server`, `/client`, `/react`, `/values`) —
+  `exports` already makes anything else unresolvable.
+- **Apps are private** and may import any published package; nothing published imports an app.
+- The **component contract** (how `auth`/`storage`/`workflow` bring their own tables and functions into an app,
+  like Convex's `app.use(component)`) is its own spec, written before the first component.
+
+### The studio
+
+The studio is an ordinary drizzle-base client of a set of **admin functions** (list tables and columns, read a
+page of rows, filter/sort, edit a cell, insert, delete), protected by an admin key. It needs no special realtime:
+its pages are subscriptions like any query, so an edit in one tab — or in Drizzle Studio, or psql — reaches every
+open tab through the capture stream. Its UI is written against a **data-source interface** (`StudioDataSource`),
+so it can be built with an in-memory mock first and switched to the real admin functions later. The admin
+functions themselves get a spec when the studio's phase starts.
+
+## The core package
+
 One npm package, `drizzle-base`, with public subpaths — the model of Convex (`convex/server`, `convex/react`)
 and drizzle-orm (`drizzle-orm/pg-core`). Chosen 25 Sep 2026 over workspace packages + an umbrella (the
 Supabase model): one install, one version, and `exports` already hides every internal file.
