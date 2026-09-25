@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { CellValue, ColumnInfo } from "../contract";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogTitle } from "../ui/dialog";
+import { CodeEditor } from "./code-editor";
 import { parseCellValue, textForEditing } from "./values";
 
 export interface ExpandedEditorProps {
@@ -30,15 +31,12 @@ export function ExpandedEditor({ column, value, isNew, onSave, onClose }: Expand
         <DialogTitle>
           {column.name} <span className="font-mono text-xs text-muted-foreground">{column.pgType}</span>
         </DialogTitle>
-        <textarea
-          aria-label={`Value of ${column.name}`}
-          className="h-64 w-full resize-y rounded-lg border border-input bg-transparent p-2 font-mono text-sm outline-none focus-visible:border-ring aria-invalid:border-destructive"
+        <CodeEditor
+          label={`Value of ${column.name}`}
           value={text}
-          aria-invalid={!parsed.ok || undefined}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") save();
-          }}
+          onChange={setText}
+          onSubmit={save}
+          invalid={!parsed.ok}
         />
         {!parsed.ok && (
           <p role="alert" className="text-xs text-destructive">
