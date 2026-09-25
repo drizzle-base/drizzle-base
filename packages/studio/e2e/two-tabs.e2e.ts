@@ -24,6 +24,7 @@ function user1Id(tab: Tab) {
           sort: [],
           limit: 1,
           offset: 0,
+          withTotal: true,
         },
         (p) => {
           stop();
@@ -95,6 +96,7 @@ test("writes from two tabs at once converge: every open page ends with all of th
           sort: [],
           limit: 100,
           offset: 0,
+          withTotal: true,
         },
         (p) => {
           w.__ids = p.rows.map((r) => r["id"]);

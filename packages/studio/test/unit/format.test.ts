@@ -21,7 +21,7 @@ test("formatCount: sidebar row estimates", () => {
 });
 
 describe("diffPages", () => {
-  const page = (rows: Page["rows"], revision: number): Page => ({ rows, total: rows.length, revision });
+  const page = (rows: Page["rows"], revision: number): Page => ({ rows, total: rows.length, hasMore: false, revision });
   const cols = ["id", "name", "n"];
 
   test("marks exactly the cells whose value changed, by primary key", () => {

@@ -103,7 +103,7 @@ export function runPage(
   table: QueryTable,
   rows: readonly Row[],
   req: Pick<PageRequest, "filters" | "sort" | "limit" | "offset">,
-): { rows: Row[]; total: number } {
+): { rows: Row[]; total: number; hasMore: boolean } {
   if (!Number.isInteger(req.limit) || req.limit < 0 || !Number.isInteger(req.offset) || req.offset < 0) {
     throw new StudioDataSourceError("invalid_value", "limit and offset must be non-negative integers");
   }
@@ -128,5 +128,9 @@ export function runPage(
     }
     return 0;
   });
-  return { rows: kept.slice(req.offset, req.offset + req.limit), total: kept.length };
+  return {
+    rows: kept.slice(req.offset, req.offset + req.limit),
+    total: kept.length,
+    hasMore: req.offset + req.limit < kept.length,
+  };
 }

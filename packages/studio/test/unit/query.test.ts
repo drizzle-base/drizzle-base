@@ -75,6 +75,7 @@ describe("sort and pages", () => {
     const page = runPage(T, ROWS, { filters: [], sort: [], limit: 2, offset: 1 });
     expect(page.rows.map((r) => r["id"])).toEqual([2, 3]);
     expect(page.total).toBe(4);
+    expect(page.hasMore).toBe(true);
   });
 });
 

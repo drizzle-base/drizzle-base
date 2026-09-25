@@ -143,10 +143,12 @@ export function createMockDataSource(opts: MockOptions): MockDataSource {
     try {
       const { info, rows } = relation(sub.req.table);
       const result = runPage(info, rows, sub.req);
-      const json = JSON.stringify(result);
+      // Only what the subscriber sees decides whether to push: without withTotal a changed count alone is no news.
+      const shown = { rows: result.rows, total: sub.req.withTotal ? result.total : null, hasMore: result.hasMore };
+      const json = JSON.stringify(shown);
       if (json === sub.last) return; // pushes happen when the result changes, not on every commit
       sub.last = json;
-      const page: Page = { rows: structuredClone(result.rows), total: result.total, revision };
+      const page: Page = { ...structuredClone(shown), revision };
       deliver(sub, () => sub.onPage(page));
     } catch (e) {
       if (sub.last === "error") return;
