@@ -1,0 +1,104 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@source "./";
+@source "../playground";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, Menlo, Consolas, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-cell-live: var(--cell-live);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+}
+
+@theme {
+  --animate-cell-flash: cell-flash 1.6s ease-out;
+
+  @keyframes cell-flash {
+    from {
+      background-color: var(--cell-live);
+    }
+    to {
+      background-color: transparent;
+    }
+  }
+}
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.2 0.005 85);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2 0.005 85);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2 0.005 85);
+  --primary: oklch(0.3 0.008 85);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.3 0.008 85);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.6 0.005 285);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.3 0.008 85);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.93 0 0);
+  --input: oklch(0.93 0 0);
+  --ring: oklch(0.8 0.005 285);
+  --radius: 0.5rem;
+  /* A push landed here: green, so it is never confused with a pending edit (amber, later slices). */
+  --cell-live: oklch(0.93 0.08 155);
+}
+
+.dark {
+  --background: oklch(0.17 0 0);
+  --foreground: oklch(0.87 0 0);
+  --card: oklch(0.2 0 0);
+  --card-foreground: oklch(0.87 0 0);
+  --popover: oklch(0.2 0 0);
+  --popover-foreground: oklch(0.87 0 0);
+  --primary: oklch(0.87 0 0);
+  --primary-foreground: oklch(0.17 0 0);
+  --secondary: oklch(0.24 0 0);
+  --secondary-foreground: oklch(0.87 0 0);
+  --muted: oklch(0.22 0 0);
+  --muted-foreground: oklch(0.62 0.005 285);
+  --accent: oklch(0.24 0 0);
+  --accent-foreground: oklch(0.87 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(0.3 0 0);
+  --input: oklch(0.3 0 0);
+  --ring: oklch(0.45 0 0);
+  --cell-live: oklch(0.36 0.07 155);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background font-sans text-foreground;
+  }
+}

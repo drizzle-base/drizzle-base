@@ -97,6 +97,18 @@ export interface StudioDataSource {
 }
 ```
 
+**Contract changes** (the live version is `packages/studio/src/contract/index.ts`):
+
+- 25 Sep 2026 (S1, after studying Drizzle Studio): `ColumnKind` gains `bigint` and `float`; `ColumnInfo` gains
+  `elementKind` for arrays. Values are typed `CellValue` and travel as Postgres text for every kind JSON cannot
+  carry exactly (bigint, numeric, uuid, dates and times, json, bytea); integer/float are numbers, boolean a boolean,
+  arrays arrays. `FilterOp` gains `notLike` (Drizzle Studio has `NOT LIKE`). Errors are `StudioDataSourceError` with a
+  `code` (`read_only`, `unknown_table`, `unknown_column`, `not_null`, `invalid_value`). Rows are ordered by `sort` and
+  then by the primary key; `subscribePage` never calls back synchronously nor after unsubscribing. Reverse relations
+  are derived in the client from `references`: no contract change.
+- 25 Sep 2026 (S1 final review): `StudioErrorCode` gains `unique_violation` (a primary key already taken, on insert or
+  on update — Postgres's 23505), with a conformance test. A page's `revision` only grows, across a mock reset too.
+
 **The mock** (`createMockDataSource(seed)`): in-memory tables seeded with a realistic dataset (users, posts,
 comments, an enum, a json column, a view, a table without a primary key, a few thousand rows); a
 `BroadcastChannel` so a write in one tab re-pushes the pages open in every tab; an optional artificial latency; and
@@ -143,6 +155,13 @@ serve them:
 - The conformance suite passes on the mock; component tests cover each editor and the pending-changes bar.
 - `packages/studio/NOTES.md` records what was observed in Drizzle Studio and the decisions taken from it.
 - `bun run check` green; a fresh reviewer on the branch; the owner merges.
+
+**Progress.** S1 (25 Sep 2026, `docs/superpowers/plans/2026-09-25-studio-00-1-live-readonly-grid.md`): contract,
+live mock, conformance suite, read-only studio (sidebar, virtualised grid, pager, theme), two-tab Playwright test
+with its BroadcastChannel sabotage. The mock's log lives in IndexedDB, and each committed entry travels in the
+BroadcastChannel message: with localStorage, Chromium showed another tab's write later than the message and a push
+was lost. Next: S2 filters, sorts, columns; S3 editing; S4 selection, clipboard, export, foreign keys; S5 import UI,
+structure tab, final review.
 
 ## 6. What happens later (not this session)
 

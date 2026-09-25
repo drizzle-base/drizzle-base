@@ -9,9 +9,9 @@
     "prepare": "git config core.hooksPath .githooks",
     "lint": "biome lint .",
     "format": "biome format --write .",
-    "check": "biome check . && bun run --filter drizzle-base typecheck && bun run --filter drizzle-base test:unit",
-    "test": "bun run --filter drizzle-base test",
-    "typecheck": "bun run --filter drizzle-base typecheck"
+    "check": "biome check . && bun run --filter drizzle-base typecheck && bun run --filter drizzle-base test:unit && bun run --filter @drizzle-base/studio typecheck && bun run --filter @drizzle-base/studio test:unit",
+    "test": "bun run --filter drizzle-base test && bun run --filter @drizzle-base/studio test",
+    "typecheck": "bun run --filter drizzle-base typecheck && bun run --filter @drizzle-base/studio typecheck"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14"
