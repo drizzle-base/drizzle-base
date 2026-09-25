@@ -6,16 +6,19 @@ export interface ResizeHandleProps {
   width: number;
   /** `commit` is false while dragging (render only) and true when the width should be saved. */
   onResize(width: number, commit: boolean): void;
+  /** Left: dragging left widens (a panel docked on the right). Default right. */
+  edge?: "right" | "left";
 }
 
 const STEP = 16;
 
-export function ResizeHandle({ name, width, onResize }: ResizeHandleProps) {
+export function ResizeHandle({ name, width, onResize, edge = "right" }: ResizeHandleProps) {
   const onPointerDown = (e: ReactPointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
     const startX = e.clientX;
-    const at = (x: number) => Math.max(MIN_WIDTH, Math.round(width + x - startX));
+    const at = (x: number) =>
+      Math.max(MIN_WIDTH, Math.round(edge === "left" ? width - (x - startX) : width + x - startX));
     const move = (ev: PointerEvent) => onResize(at(ev.clientX), false);
     const up = (ev: PointerEvent) => {
       window.removeEventListener("pointermove", move);
@@ -28,7 +31,8 @@ export function ResizeHandle({ name, width, onResize }: ResizeHandleProps) {
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     e.preventDefault();
-    onResize(Math.max(MIN_WIDTH, width + (e.key === "ArrowRight" ? STEP : -STEP)), true);
+    const widen = edge === "left" ? e.key === "ArrowLeft" : e.key === "ArrowRight";
+    onResize(Math.max(MIN_WIDTH, width + (widen ? STEP : -STEP)), true);
   };
   return (
     // biome-ignore lint/a11y/useSemanticElements: a focusable, adjustable separator has no native element
@@ -41,7 +45,7 @@ export function ResizeHandle({ name, width, onResize }: ResizeHandleProps) {
       tabIndex={0}
       onPointerDown={onPointerDown}
       onKeyDown={onKeyDown}
-      className="absolute top-0 right-0 z-10 h-full w-1.5 cursor-col-resize touch-none outline-none hover:bg-ring/60 focus-visible:bg-ring"
+      className={`absolute top-0 z-10 h-full w-1.5 cursor-col-resize touch-none outline-none hover:bg-ring/60 focus-visible:bg-ring ${edge === "left" ? "left-0" : "right-0"}`}
     />
   );
 }

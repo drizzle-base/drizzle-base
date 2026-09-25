@@ -12,6 +12,7 @@ import {
   missingRequired,
   removeNewRow,
   resolveConflict,
+  revertCell,
   setCell,
   setNewCell,
   type TableDraft,
@@ -19,6 +20,7 @@ import {
   withoutSaved,
 } from "../edit/draft";
 import { EditBar, type SaveError } from "../edit/edit-bar";
+import { RowPanel } from "../edit/row-panel";
 import { DataGrid, type GridEditing } from "../grid/data-grid";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "../ui/dialog";
@@ -81,6 +83,8 @@ export function Studio({
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [panel, setPanel] = useState<{ table: string; rowId: string } | null>(null);
+  const [panelWidth, setPanelWidth] = useState(380);
 
   useEffect(() => {
     let live = true;
@@ -136,6 +140,10 @@ export function Studio({
     setSelectedRows(new Set());
   }, [viewKey]);
 
+  useEffect(() => {
+    setPanel((p) => (p && p.table !== view.table ? null : p));
+  }, [view.table]);
+
   const editable = table !== null && table.kind === "table" && table.primaryKey.length > 0;
   const draftKey = view.table ?? "";
   const draft = drafts[draftKey] ?? EMPTY_DRAFT;
@@ -163,8 +171,13 @@ export function Studio({
     // The grid stays editable while a save is in flight: on success remove only what was sent.
     const sent = draft;
     try {
-      await dataSource.applyEdits(table, toEdits(sent));
+      const { inserted } = await dataSource.applyEdits(table, toEdits(sent));
       updateDraft(id, (now) => withoutSaved(now, sent));
+      setPanel((p) => {
+        const i = sent.inserts.findIndex((r) => r.id === p?.rowId);
+        const k = inserted[i];
+        return p && k ? { ...p, rowId: rowIdOf(table.primaryKey, k, 0) } : p;
+      });
     } catch (e) {
       const key = e instanceof StudioDataSourceError ? e.key : undefined;
       setSaveError({
@@ -210,8 +223,27 @@ export function Studio({
           updateDraft(draftKey, (d) => setCell(d, rowId, key, column, value, original)),
         onEditNew: (id, column, value) => updateDraft(draftKey, (d) => setNewCell(d, id, column, value)),
         onRemoveNew: (id) => updateDraft(draftKey, (d) => removeNewRow(d, id)),
+        onExpandRow: (rowId) => setPanel({ table: draftKey, rowId }),
+        onFocusRow: (rowId) => setPanel((p) => (p ? { ...p, rowId } : p)),
       }
     : undefined;
+
+  const panelRow =
+    panel && table
+      ? (() => {
+          const n = draft.inserts.find((r) => r.id === panel.rowId);
+          if (n) return { id: n.id, isNew: true, key: null, live: {} };
+          const r = pageRows.find((x) => x.id === panel.rowId);
+          return r
+            ? {
+                id: r.id,
+                isNew: false,
+                key: Object.fromEntries(table.primaryKey.map((k) => [k, r.row[k] ?? null])),
+                live: r.row,
+              }
+            : null;
+        })()
+      : null;
 
   const selectTable = (id: string) => {
     const next = prefs.lastView(id) ?? viewOfTable(id, view.limit);
@@ -405,7 +437,25 @@ export function Studio({
               ))}
             </div>
           )}
-          <div className="min-h-0 flex-1">{body}</div>
+          <div className="flex min-h-0 flex-1">
+            <div className="min-w-0 flex-1">{body}</div>
+            {editable && panel && table && (
+              <RowPanel
+                table={table}
+                row={panelRow}
+                draft={draft}
+                conflicts={new Set(conflicts.map((c) => cellKey(c.rowId, c.column)))}
+                width={panelWidth}
+                onResize={setPanelWidth}
+                onEditExisting={(rowId, key, column, value, original) =>
+                  updateDraft(draftKey, (d) => setCell(d, rowId, key, column, value, original))
+                }
+                onEditNew={(id, column, value) => updateDraft(draftKey, (d) => setNewCell(d, id, column, value))}
+                onRevert={(rowId, column) => updateDraft(draftKey, (d) => revertCell(d, rowId, column))}
+                onClose={() => setPanel(null)}
+              />
+            )}
+          </div>
           <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
             <DialogContent>
               <DialogTitle>{`Delete ${selectedRows.size} ${selectedRows.size === 1 ? "row" : "rows"}?`}</DialogTitle>

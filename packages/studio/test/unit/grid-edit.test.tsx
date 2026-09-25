@@ -41,6 +41,8 @@ function Harness({
             setDraft(setCell(draft, rowId, key, column, value, original)),
           onEditNew: (id, column, value) => setDraft(setNewCell(draft, id, column, value)),
           onRemoveNew: (id) => setDraft(removeNewRow(draft, id)),
+          onExpandRow: () => {},
+          onFocusRow: () => {},
         }}
       />
     </>

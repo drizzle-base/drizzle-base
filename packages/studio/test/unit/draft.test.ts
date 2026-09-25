@@ -9,6 +9,7 @@ import {
   missingRequired,
   removeNewRow,
   resolveConflict,
+  revertCell,
   setCell,
   setNewCell,
   toEdits,
@@ -41,6 +42,14 @@ describe("new rows", () => {
     expect(changeCount(d)).toBe(2);
     expect(removeNewRow(d, two.id).inserts.map((r) => r.id)).toEqual([one.id]);
   });
+});
+
+test("revertCell drops one pending cell; the row goes when it was the last", () => {
+  let d = setCell(EMPTY_DRAFT, "r1", K, "name", "b", "a");
+  d = setCell(d, "r1", K, "age", 3, 2);
+  d = revertCell(d, "r1", "name");
+  expect(Object.keys(d.updates["r1"]?.cells ?? {})).toEqual(["age"]);
+  expect(revertCell(d, "r1", "age").updates["r1"]).toBeUndefined();
 });
 
 test("toEdits: updates carry what they change and what they expected", () => {
