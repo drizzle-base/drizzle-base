@@ -245,9 +245,29 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
     }
   }
 
-  reset(_reason: string): void {} // Task 7
+  // The capture failed (spec D14, P-M6): commits may have been lost, so no registered result can be trusted. Every
+  // subscriber is told; the engine stays down — refusing subscribes — until resume(), which the caller invokes only
+  // after recreating the slot and restarting the capture, so no new snapshot predates the new slot.
+  reset(reason: string): void {
+    this.generation++;
+    this.down = true;
+    const listeners = [...this.entries.values()].flatMap((e) => [...e.listeners]);
+    for (const key of this.entries.keys()) this.registry.remove(key);
+    this.entries.clear();
+    this.pending.clear();
+    this.buffer.clear();
+    for (const t of this.retryTimers) clearTimeout(t);
+    this.retryTimers.clear();
+    for (const w of this.cycleWaiters) w.reject(new EngineDownError());
+    this.cycleWaiters = [];
+    for (const l of listeners) deliver(l, { kind: "reset", reason });
+  }
 
-  resume(): void {} // Task 7
+  resume(): void {
+    if (this.closed) return;
+    this.down = false;
+    this.schedule();
+  }
 
   close(): void {
     this.closed = true;

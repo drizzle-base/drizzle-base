@@ -51,3 +51,37 @@ query's extra cost is its SQL (`left join lateral` + `json_agg`), not JavaScript
 connection, `BEGIN … READ ONLY`, `pg_current_snapshot()`, `COMMIT` (three extra round trips) plus the parse gate
 and the read-set, with the parse and catalog caches warm. Folding BEGIN and the snapshot into one round trip is
 the obvious next step when the runtime's latency matters (not taken in 01a-2).
+
+## Subscriptions (DZB-01a-3, 25 Sep 2026, same machine, load avg ~6–8: a second session was running)
+
+Commit → push latency and the useless re-run ratio of table-level invalidation. N subscriptions, each on the posts
+of its own author; 200 raw-SQL inserts, each for ONE author, measured on the subscriber of that author.
+Command: `bun --preload ./test/support/env.ts load/subscriptions/reactive_latency.ts` (4 lanes).
+
+| Subscriptions | p50 ms | p99 ms | Re-runs | Useless | Useless ratio |
+|---|---|---|---|---|---|
+| 1 | 7.69 | 11.78 | 200 | 0 | 0 |
+| 100 | 46.11 | 68.63 | 20 000 | 19 800 | 0.99 |
+| 1 000 | 370.79 | 616.74 | 200 000 | 199 800 | 0.999 |
+
+What it measured: at table level every subscription on `posts` re-runs on every insert into `posts`; N−1 of them
+return the same value. Latency grows linearly with N because the cycle re-runs all of them before it pushes: the
+useless ratio is the number 01b's row-level read-sets must lower. The single-subscription p50 (7.7 ms against a
+0.5 ms capture p50) is the cycle's fixed cost: export, barrier, one transaction per lane, and a catalog resolved
+per run (below).
+
+### The price of resolving the catalog per run
+
+Plan v3 stopped caching catalog lookups across runs (a lookup made under one snapshot could be served to a run
+under another after a DDL). A/B on `load/runtime/drizzle_overhead.ts`, interleaved, same load:
+
+| Variant | per-run catalog p50 ms (r1 / r2) | shared catalog p50 ms (r1) |
+|---|---|---|
+| `runtime.runQuery` (builder) | 3.818 / 4.337 | 1.962 |
+| `runtime.runQuery` (relational) | 6.918 / 7.740 | 2.116 |
+
+Roughly +2 ms per run for a one-table query and +5 ms for the relational one: every lookup is a round trip, and
+nothing is remembered. **Open decision (owner):** this lands for correctness; the cheap cure that keeps it is
+resolving every relation, function and operator of a run in ONE catalog query (one round trip instead of one per
+lookup). Not taken here: it changes `readset` (kernel), outside this plan.
+
