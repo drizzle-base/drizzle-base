@@ -1,4 +1,4 @@
-// The driver surface drizzle-orm/bun-sql calls, over ONE reserved connection that drizzlebase has already put
+// The driver surface drizzle-orm/bun-sql calls, over ONE reserved connection that drizzle-base has already put
 // inside BEGIN. Every statement passes parseStatement (one SELECT/INSERT/UPDATE/DELETE) and is recorded for the
 // read-set. db.transaction() arrives here as begin(): it must become a SAVEPOINT — the real begin() committed
 // the outer transaction and changed the snapshot under the query (review A, RA-A4).

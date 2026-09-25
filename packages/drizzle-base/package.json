@@ -1,6 +1,8 @@
 {
-  "name": "drizzlebase",
+  "name": "drizzle-base",
   "version": "0.0.0",
+  "description": "Reactive queries, a shared cache and ACID mutations for drizzle-orm on Postgres \u2014 Convex-style, with plain Drizzle.",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "exports": {

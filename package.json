@@ -1,5 +1,5 @@
 {
-  "name": "drizzlebase-workspace",
+  "name": "drizzle-base-workspace",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -9,9 +9,9 @@
     "prepare": "git config core.hooksPath .githooks",
     "lint": "biome lint .",
     "format": "biome format --write .",
-    "check": "biome check . && bun run --filter drizzlebase typecheck && bun run --filter drizzlebase test:unit",
-    "test": "bun run --filter drizzlebase test",
-    "typecheck": "bun run --filter drizzlebase typecheck"
+    "check": "biome check . && bun run --filter drizzle-base typecheck && bun run --filter drizzle-base test:unit",
+    "test": "bun run --filter drizzle-base test",
+    "typecheck": "bun run --filter drizzle-base typecheck"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14"

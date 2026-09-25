@@ -1,6 +1,6 @@
 # CLAUDE.md — a guide for agents (and humans) working in this repo
 
-drizzlebase gives an app written with **plain drizzle-orm** (schema in real columns, drizzle-kit migrations,
+drizzle-base gives an app written with **plain drizzle-orm** (schema in real columns, drizzle-kit migrations,
 Drizzle Studio) what Convex gives an app written against its own API: named server functions, reactive queries
 that re-push when the data they read changes, a shared cache, ACID mutations, a typed client. The developer
 writes ANY Drizzle query; the read-set is derived from the SQL the driver sees. Postgres 18 only (for now).
@@ -83,7 +83,7 @@ bun run check                    # Biome + typecheck + unit tests (no database)
 bun run test                     # everything, incl. integration and e2e against the test database
 ```
 
-Benches: `cd packages/drizzlebase && bun --preload ./test/support/env.ts load/<module>/<bench>.ts`. The old spike
+Benches: `cd packages/drizzle-base && bun --preload ./test/support/env.ts load/<module>/<bench>.ts`. The old spike
 container (`drizzlebase-pg18`, :5477, db `spike`) belongs to `spikes/` only.
 
 ## Gotchas — lessons already paid for

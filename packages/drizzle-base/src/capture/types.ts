@@ -1,4 +1,4 @@
-// What the capture layer hands to the rest of drizzlebase: committed transactions in commit order, and
+// What the capture layer hands to the rest of drizzle-base: committed transactions in commit order, and
 // barriers. A barrier is a non-transactional logical message: it is decoded at the WAL position where it was
 // written, so every transaction whose commit record precedes it has already been delivered (spec P-A3).
 export type Row = Record<string, unknown>;
@@ -19,10 +19,10 @@ export interface CapturedTxn {
   // Tables whose changes must invalidate at TABLE level: truncated, over the row cap, or changed without an
   // old image (a relation that is not REPLICA IDENTITY FULL). Invariant 1: widen, never drop.
   wholeTables: Set<string>;
-  ddl: boolean; // carried a drizzlebase.ddl message: invalidate everything, recycle the pool (spec P-M1)
+  ddl: boolean; // carried a drizzle-base.ddl message: invalidate everything, recycle the pool (spec P-M1)
 }
 
 export type StreamEvent = { kind: "txn"; txn: CapturedTxn } | { kind: "barrier"; id: string; lsn: string };
 
-export const BARRIER_PREFIX = "drizzlebase.barrier";
-export const DDL_PREFIX = "drizzlebase.ddl";
+export const BARRIER_PREFIX = "drizzle-base.barrier";
+export const DDL_PREFIX = "drizzle-base.ddl";
