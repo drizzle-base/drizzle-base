@@ -132,6 +132,11 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
     return this.buffer.size;
   }
 
+  // Live cache entries: what a server's cleanup is tested against.
+  get size(): number {
+    return this.entries.size;
+  }
+
   // Every completed cycle, whether or not it pushed anything to a given subscriber: a client waiting for "a
   // transition at or after cycle N" (read-your-writes) needs to hear about cycles that changed none of its queries.
   onCycleComplete(listener: (id: number) => void): () => void {
