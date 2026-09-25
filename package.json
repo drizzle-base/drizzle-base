@@ -1,0 +1,10 @@
+{
+  "name": "drizzlebase-workspace",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "test": "bun run --filter drizzlebase test",
+    "typecheck": "bun run --filter drizzlebase typecheck"
+  }
+}
