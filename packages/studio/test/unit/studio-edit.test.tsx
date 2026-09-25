@@ -221,6 +221,32 @@ describe("editing in the studio", () => {
     expect(dirty).toContain(true);
   });
 
+  test("a failed save belongs to its table: another table shows no error, and it is still there on return", async () => {
+    setup();
+    await screen.findByText("User 1");
+    await edit(String(idOf(2)), String(idOf(1)));
+    await act(async () => fireEvent.click(bar().getByRole("button", { name: "Save changes" })));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "posts" }));
+    await screen.findByText("Post 1");
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "users" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("already has a row");
+  });
+
+  test("delete counts only selected rows still on the page", async () => {
+    const { other } = setup();
+    await screen.findByText("User 1");
+    const boxes = screen.getAllByRole("checkbox", { name: "Select row" });
+    fireEvent.click(boxes[0] as HTMLElement);
+    fireEvent.click(boxes[1] as HTMLElement);
+    expect(screen.getByRole("button", { name: "Delete 2 rows" })).toBeTruthy();
+    await act(() => other.deleteRows(USERS, [{ id: idOf(1) }]));
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Delete 1 row" }));
+    expect(within(await screen.findByRole("dialog")).getByText("Delete 1 row?")).toBeTruthy();
+  });
+
   test("views and tables without a key show no editing", async () => {
     setup();
     await screen.findByText("User 1");

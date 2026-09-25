@@ -79,7 +79,7 @@ export function Studio({
   // Pending edits of every table, kept while the person moves around: switching tables or Back loses nothing.
   const [drafts, setDrafts] = useState<Record<string, TableDraft>>({});
   const [selectedRows, setSelectedRows] = useState<ReadonlySet<string>>(new Set());
-  const [saveError, setSaveError] = useState<SaveError | null>(null);
+  const [saveErrors, setSaveErrors] = useState<Record<string, SaveError>>({});
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -160,6 +160,15 @@ export function Studio({
   }, [anyDirty, onDirtyChange]);
 
   const pageRows = table && page ? page.rows.map((row, i) => ({ id: rowIdOf(table.primaryKey, row, i), row })) : [];
+  const doomed = pageRows.filter((r) => selectedRows.has(r.id));
+  const saveError = saveErrors[draftKey] ?? null;
+  const setSaveError = (id: string, e: SaveError | null) =>
+    setSaveErrors((all) => {
+      const next = { ...all };
+      if (e) next[id] = e;
+      else delete next[id];
+      return next;
+    });
   const conflicts = editable ? findConflicts(draft, pageRows) : [];
   const missing = table ? missingRequired(draft, table.columns).length : 0;
 
@@ -167,7 +176,7 @@ export function Studio({
     if (!table) return;
     const id = tableId(table);
     setSaving(true);
-    setSaveError(null);
+    setSaveError(id, null);
     // The grid stays editable while a save is in flight: on success remove only what was sent.
     const sent = draft;
     try {
@@ -180,7 +189,7 @@ export function Studio({
       });
     } catch (e) {
       const key = e instanceof StudioDataSourceError ? e.key : undefined;
-      setSaveError({
+      setSaveError(id, {
         message: e instanceof Error ? e.message : String(e),
         rowId: key ? rowIdOf(table.primaryKey, key, 0) : null,
       });
@@ -191,7 +200,6 @@ export function Studio({
 
   const deleteSelected = async () => {
     if (!table) return;
-    const doomed = pageRows.filter((r) => selectedRows.has(r.id));
     try {
       await dataSource.deleteRows(
         table,
@@ -351,10 +359,10 @@ export function Studio({
                     Add row
                   </Button>
                 )}
-                {editable && selectedRows.size > 0 && (
+                {editable && doomed.length > 0 && (
                   <Button type="button" variant="destructive" size="sm" onClick={() => setConfirmDelete(true)}>
                     <Trash2 />
-                    {`Delete ${selectedRows.size} ${selectedRows.size === 1 ? "row" : "rows"}`}
+                    {`Delete ${doomed.length} ${doomed.length === 1 ? "row" : "rows"}`}
                   </Button>
                 )}
               </>
@@ -411,12 +419,12 @@ export function Studio({
               onSave={() => void save()}
               onDiscard={() => {
                 updateDraft(draftKey, () => EMPTY_DRAFT);
-                setSaveError(null);
+                setSaveError(draftKey, null);
               }}
               onResolve={(c, choice) => updateDraft(draftKey, (d) => resolveConflict(d, c, choice))}
               onDiscardRow={(rowId) => {
                 updateDraft(draftKey, (d) => discardRow(d, rowId));
-                setSaveError(null);
+                setSaveError(draftKey, null);
               }}
             />
           )}
@@ -458,7 +466,7 @@ export function Studio({
           </div>
           <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
             <DialogContent>
-              <DialogTitle>{`Delete ${selectedRows.size} ${selectedRows.size === 1 ? "row" : "rows"}?`}</DialogTitle>
+              <DialogTitle>{`Delete ${doomed.length} ${doomed.length === 1 ? "row" : "rows"}?`}</DialogTitle>
               <DialogDescription>
                 They are deleted now, for every tab, and cannot be restored from here.
               </DialogDescription>
