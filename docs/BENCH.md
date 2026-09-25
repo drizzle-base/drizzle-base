@@ -7,7 +7,7 @@ and what the number measured (which branch of the code it exercised). Re-measure
 
 | Case | p50 ms | p99 ms | Command |
 |---|---|---|---|
-| commit → onEvent, idle (500 inserts) | 0.50 | 1.52 | `bun --preload ./test/env.ts load/capture/stream_latency.ts` |
+| commit → onEvent, idle (500 inserts) | 0.50 | 1.52 | `bun --preload ./test/support/env.ts load/capture/stream_latency.ts` |
 | one open transaction pinning the slot + 400k-row noise, step 0 | 0.57 | 9.23 | same |
 | same, step 1 | 0.63 | 2.17 | same |
 | same, step 2 | 0.51 | 1.90 | same |
@@ -29,13 +29,13 @@ is the old tuple logged with its TOAST detoasted (spec P-M9; O2 files a per-tabl
 
 | Barrier | median of 20, quiet database | Where |
 |---|---|---|
-| `pg_logical_emit_message(false, …)` | 181 ms | `test/pgoutput.test.ts` "a barrier arrives promptly…", before the fix |
+| `pg_logical_emit_message(false, …)` | 181 ms | `test/capture/integration/pgoutput.test.ts` "a barrier arrives promptly…", before the fix |
 | same with `flush = true` | < 50 ms (the test's bound) | after the fix |
 
 ## Drizzle overhead and the runtime (DZB-01a-2, 25 Sep 2026, same machine, load avg ~2.5)
 
 Sequential latency, one call at a time, 3 000 calls per cell after 200 warm-up calls, two interleaved rounds.
-Command: `bun --preload ./test/env.ts load/runtime/drizzle_overhead.ts` (1 000 users, 3 000 posts; select by primary key).
+Command: `bun --preload ./test/support/env.ts load/runtime/drizzle_overhead.ts` (1 000 users, 3 000 posts; select by primary key).
 
 | Variant | p50 ms (r1 / r2) | p99 ms (r1 / r2) | ops/s (r1 / r2) |
 |---|---|---|---|
