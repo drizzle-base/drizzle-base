@@ -1,5 +1,6 @@
 export { TxnAssembler } from "./assembler";
 export { emitBarrier } from "./barrier";
+export { lsnToBigInt } from "./lsn";
 export { type CaptureHandlers, type PgConnection, PgoutputCapture } from "./pgoutput";
 export {
   assertCapture,
