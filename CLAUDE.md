@@ -70,14 +70,17 @@ of it.
 - **Compare counts**, not only "0 fail": Bun silently ignores a test path that matches nothing. After any move the
   run must say the same `Ran N tests across M files`.
 - **Restore a sabotaged file with `cp` from a backup**, never `git checkout --` (it eats uncommitted work).
-- Tests only touch the database named `dzb_test` (a guard refuses anything without "test"); every test object
+- Tests only touch this checkout's test database: `dzb_test` in the main checkout, `dzb_test_<worktree>_<hash>`
+  in a linked git worktree (`test/support/testdb.ts`; `bun run test` creates it; `DZB_TEST_DB` overrides; a guard
+  refuses any name without "test"). Suites in different worktrees no longer share fixtures or the stream, but they
+  share the CLUSTER: a long transaction in one pins the xmin every other sees. Every test object
   (schema, slot, publication) carries its pid in its name and is swept when that pid is dead.
 
 ## Running
 
 ```bash
 bash scripts/gen-env.sh          # .env with a random POSTGRES_PASSWORD (mode 600, gitignored) — never print it
-docker compose up -d pg          # Postgres 18.6, 127.0.0.1:5478, wal_level=logical, db dzb_test
+docker compose up -d pg          # Postgres 18.6, 127.0.0.1:5478, wal_level=logical (db dzb_test; worktrees get their own)
 bun install                      # also installs the pre-commit hook (core.hooksPath = .githooks)
 bun run check                    # Biome + typecheck + unit tests (no database)
 bun run test                     # everything, incl. integration and e2e against the test database
