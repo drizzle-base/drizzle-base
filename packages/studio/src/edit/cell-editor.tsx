@@ -1,5 +1,8 @@
-import { useCallback, useRef, useState } from "react";
+import { type FocusEvent, useCallback, useRef, useState } from "react";
 import type { CellValue, ColumnInfo } from "../contract";
+import { isTimeKind } from "../lib/pgtime";
+import { Popover, PopoverContent } from "../ui/popover";
+import { DateTimePicker } from "./datetime-picker";
 import { parseCellValue, textForEditing } from "./values";
 
 export interface CellEditorProps {
@@ -28,6 +31,15 @@ export function CellEditor({ column, value, onCommit, onCancel, onExpand }: Cell
     fn();
   };
   const focusOnMount = useCallback((el: HTMLElement | null) => el?.focus(), []);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const picker = useRef<HTMLDivElement | null>(null);
+  const setInput = useCallback((el: HTMLInputElement | null) => {
+    inputRef.current = el;
+    el?.focus();
+  }, []);
+  // Focus moving into the date picker (keyboard) is not leaving the editor.
+  const intoPicker = (e: FocusEvent) =>
+    e.relatedTarget instanceof Node && Boolean(picker.current?.contains(e.relatedTarget));
 
   const choices =
     column.kind === "boolean" ? ["true", "false"] : column.kind === "enum" ? (column.enumValues ?? []) : null;
@@ -72,7 +84,7 @@ export function CellEditor({ column, value, onCommit, onCancel, onExpand }: Cell
   return (
     <>
       <input
-        ref={focusOnMount}
+        ref={setInput}
         aria-label={`Edit ${column.name}`}
         className={CONTROL}
         value={text}
@@ -91,8 +103,32 @@ export function CellEditor({ column, value, onCommit, onCancel, onExpand }: Cell
             finish(onCancel);
           }
         }}
-        onBlur={() => (parsed.ok ? commit() : finish(onCancel))}
+        onBlur={(e) => {
+          if (intoPicker(e)) return;
+          if (parsed.ok) commit();
+          else finish(onCancel);
+        }}
       />
+      {isTimeKind(column.kind) && (
+        <Popover open modal={false}>
+          <PopoverContent
+            anchor={inputRef}
+            align="start"
+            initialFocus={false}
+            finalFocus={false}
+            className="w-auto p-0"
+          >
+            <div ref={picker}>
+              <DateTimePicker
+                kind={column.kind}
+                text={text}
+                nullable={column.nullable}
+                onPick={(t) => (t === null ? finish(() => onCommit(null)) : setText(t))}
+              />
+            </div>
+          </PopoverContent>
+        </Popover>
+      )}
       {onExpand && (
         <button
           type="button"
