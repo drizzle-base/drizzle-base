@@ -160,6 +160,21 @@ taint on `ctx.auth` reads — for the auth spec), RB-B3 (regression benches: an 
 Each tier must pay for itself against 01a's useless-ratio baseline (the minivex invariant: measure before and
 after). Each phase keeps a final reviewer on its implementation.
 
+### DZB-01a-1 review (capture; final reviewer 24 Sep 2026, verdict "ready to merge with fixes")
+
+Fixed, each with a test that failed first: `start()` fails closed and retries a slot still held; slot and
+publication names validated (the replication command sends them unquoted and Postgres folds case — a
+mixed-case publication lost every change silently); a liveness deadline for a server that goes silent; barriers
+acknowledged plus an optional periodic barrier so a quiet app does not retain WAL without limit; the boot check
+requires every publish operation and refuses an invalidated slot or one from another database; xid and
+relation OID made unsigned. Found during implementation, also fixed: acknowledging `commitEndLsn` confirmed
+one byte past the WAL end (the library adds one) and skipped the next barrier; a failed handler let later
+transactions be acknowledged over it; unflushed barriers waited ~180 ms for the WAL writer.
+**Deferred to the phase that needs them:** partitioned roots are not made FULL (relkind `p`; widens, costs 01b
+precision); images use the process-global `pg.types` parsers and the walsender's GUCs are not pinned (RA-B4,
+before 01b); barriers can be forged by any role (01a-3 matches on the LSN `emitBarrier` returns, not the id);
+the equivalence property checks keys, not image contents (P-M8).
+
 ## 0. What and why
 
 drizzlebase gives an app written with **plain drizzle-orm** (schema in real columns, migrations by drizzle-kit,
