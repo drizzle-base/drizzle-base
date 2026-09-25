@@ -5,7 +5,7 @@ import type { SQL } from "bun";
 import { relations } from "drizzle-orm";
 import { boolean, integer, pgSchema, serial, text, uuid } from "drizzle-orm/pg-core";
 import { type CaptureNames, dropCapture, ensureCapture } from "../../src/capture/setup";
-import { testSql, uniqueName } from "../db";
+import { sweepAbandoned, testSql, uniqueName } from "../db";
 
 export const APP_SCHEMA = "dzb_app";
 const app = pgSchema(APP_SCHEMA);
@@ -56,6 +56,7 @@ create table public.dzb_outside(id int primary key);
 export async function withApp(fn: (sql: SQL, names: CaptureNames) => Promise<void>): Promise<void> {
 	const sql = testSql(8);
 	const names: CaptureNames = { schema: APP_SCHEMA, publication: uniqueName("pub"), slot: uniqueName("slot") };
+	await sweepAbandoned(sql); // a killed run leaves its slot behind, retaining WAL
 	await sql.unsafe(APP_DDL);
 	await ensureCapture(sql, names);
 	try {
