@@ -1,0 +1,9 @@
+idle {"ms_per_poll":0.644,"msgs":0}
+select1_ms 0.470
+open-txn step 0 {"ms_per_poll":41.414,"msgs":4,"r":"3/F8593450","c":"3/FA6B92C0","w":"3/FA6B92C0","behind":"33 MB"}
+open-txn step 1 {"ms_per_poll":67.984,"msgs":4,"r":"3/F8593450","c":"3/FC7DD700","w":"3/FC7DD700","behind":"66 MB"}
+open-txn step 2 {"ms_per_poll":100.165,"msgs":4,"r":"3/F8593450","c":"3/FE907208","w":"3/FE907208","behind":"99 MB"}
+open-txn step 3 {"ms_per_poll":132.492,"msgs":4,"r":"3/F8593450","c":"4/A2B648","w":"4/A2B648","behind":"133 MB"}
+open-txn step 4 {"ms_per_poll":165.912,"msgs":4,"r":"3/F8593450","c":"4/2B51D68","w":"4/2B51D68","behind":"166 MB"}
+open-txn step 5 {"ms_per_poll":204.276,"msgs":4,"r":"3/F8593450","c":"4/4C761C0","w":"4/4C761C0","behind":"199 MB"}
+after commit {"ms_per_poll":193.022,"msgs":0,"r":"3/F8593450","c":"4/4C761F0","w":"4/4C761F0","behind":"199 MB"}

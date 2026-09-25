@@ -1,0 +1,6 @@
+select * from users a inner join users b on a.manager_id = b.id 
+   a:TABLE anchor→-  b:KEYQUERY anchor→a
+select * from posts p inner join comments c on c.post_id = p.id 
+   p:TABLE anchor→-  c:KEYQUERY anchor→p
+select * from users a inner join users b on a.manager_id = b.id where a.age = 30 
+   a:INTERVAL anchor→-  b:KEYQUERY anchor→a

@@ -1,0 +1,12 @@
+round=1 ri=default wl=views wal_bytes_per_update=593 total_ms=54.397
+round=1 ri=default wl=status wal_bytes_per_update=854 total_ms=93.076
+round=1 ri=default wl=body wal_bytes_per_update=6400 total_ms=284.083
+round=1 ri=full wl=views wal_bytes_per_update=10288 total_ms=215.004
+round=1 ri=full wl=status wal_bytes_per_update=10234 total_ms=259.512
+round=1 ri=full wl=body wal_bytes_per_update=14664 total_ms=459.109
+round=2 ri=default wl=views wal_bytes_per_update=593 total_ms=49.889
+round=2 ri=default wl=status wal_bytes_per_update=1073 total_ms=87.264
+round=2 ri=default wl=body wal_bytes_per_update=5068 total_ms=270.431
+round=2 ri=full wl=views wal_bytes_per_update=9381 total_ms=302.669
+round=2 ri=full wl=status wal_bytes_per_update=9507 total_ms=372.752
+round=2 ri=full wl=body wal_bytes_per_update=12309 total_ms=511.151

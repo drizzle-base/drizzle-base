@@ -1,0 +1,1 @@
+{"bun":"1.4.2","n":76,"fails":0,"tImport_ms":31.4,"tLoad_ms":18.3,"tFirst_ms":4.666,"perParse_us":24.1,"longestChars":916,"perParseLongest_us":46.8,"perCacheHit_ns":19,"astJsonBytes_longest":5353,"rss_mb":135}

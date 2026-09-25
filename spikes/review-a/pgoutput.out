@@ -1,0 +1,40 @@
+── 1. update small col of a toasted row (REPLICA IDENTITY FULL): 4 messages
+   [slot xid col=3112556] BEGIN xid=3112556
+   [slot xid col=3112556] RELATION public.ra_toast oid=19411 ri=f cols=[id:23,small:23,big:25]
+   [slot xid col=3112556] UPDATE public.ra_toast old(O)={id=1, small=1, big=c4ca4238a0b9…(12800 chars)} new={id=1, small=2, big=<UNCHANGED-TOAST>}
+   [slot xid col=3112556] COMMIT
+── 2. stored generated column, publish_generated_columns=stored (virtual: UPDATE/DELETE refused, see review): 5 messages
+   [slot xid col=3112557] BEGIN xid=3112557
+   [slot xid col=3112557] RELATION public.ra_gen oid=19419 ri=f cols=[id:23,a:23,s:23]
+   [slot xid col=3112557] INSERT public.ra_gen new={id=1, a=1, s=10}
+   [slot xid col=3112557] UPDATE public.ra_gen old(O)={id=1, a=1, s=10} new={id=1, a=2, s=20}
+   [slot xid col=3112557] COMMIT
+── 3. insert into partitioned ra_part (publish_via_partition_root default): 4 messages
+   [slot xid col=3112558] BEGIN xid=3112558
+   [slot xid col=3112558] RELATION public.ra_part_br oid=19433 ri=f cols=[id:23,region:25]
+   [slot xid col=3112558] INSERT public.ra_part_br new={id=1, region=br}
+   [slot xid col=3112558] COMMIT
+── 4. mutation xid=3112559 writing only an unpublished table: 0 messages
+── 4b. mutation xid=3112560 with no writes at all: 0 messages
+── 5. write inside a savepoint; top-level xid = 3112561: 4 messages
+   [slot xid col=3112561] BEGIN xid=3112561
+   [slot xid col=3112561] RELATION public.ra_gen oid=19419 ri=f cols=[id:23,a:23,s:23]
+   [slot xid col=3112561] INSERT public.ra_gen new={id=2, a=2, s=20}
+   [slot xid col=3112561] COMMIT
+── 6. ALTER COLUMN TYPE … USING (rewrites every row's value): 0 messages
+   ra_alter now: [{"id":1,"v":14},{"id":2,"v":26}]
+── 7a. a second poll touching ra_toast: 4 messages
+   [slot xid col=3112564] BEGIN xid=3112564
+   [slot xid col=3112564] RELATION public.ra_toast oid=19411 ri=f cols=[id:23,small:23,big:25]
+   [slot xid col=3112564] UPDATE public.ra_toast old(O)={id=1, small=2, big=c4ca4238a0b9…(12800 chars)} new={id=1, small=3, big=<UNCHANGED-TOAST>}
+   [slot xid col=3112564] COMMIT
+── 7b. a third poll touching ra_toast: 4 messages
+   [slot xid col=3112565] BEGIN xid=3112565
+   [slot xid col=3112565] RELATION public.ra_toast oid=19411 ri=f cols=[id:23,small:23,big:25]
+   [slot xid col=3112565] UPDATE public.ra_toast old(O)={id=1, small=3, big=c4ca4238a0b9…(12800 chars)} new={id=1, small=4, big=<UNCHANGED-TOAST>}
+   [slot xid col=3112565] COMMIT
+── 8. truncate: 4 messages
+   [slot xid col=3112566] BEGIN xid=3112566
+   [slot xid col=3112566] RELATION public.ra_toast oid=19411 ri=f cols=[id:23,small:23,big:25]
+   [slot xid col=3112566] TRUNCATE opts=0 rels=public.ra_toast
+   [slot xid col=3112566] COMMIT

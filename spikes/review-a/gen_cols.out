@@ -1,0 +1,24 @@
+DROP PUBLICATION
+NOTICE:  publication "review_a_pub" does not exist, skipping
+DROP TABLE
+NOTICE:  table "g1" does not exist, skipping
+NOTICE:  table "g2" does not exist, skipping
+CREATE TABLE
+ALTER TABLE
+INSERT 0 1
+CREATE TABLE
+ALTER TABLE
+INSERT 0 1
+CREATE PUBLICATION
+ERROR:  cannot update table "g1"
+DETAIL:  Replica identity must not contain unpublished generated columns.
+ERROR:  cannot update table "g2"
+DETAIL:  Replica identity must not contain unpublished generated columns.
+ERROR:  cannot delete from table "g2"
+DETAIL:  Replica identity must not contain unpublished generated columns.
+ALTER PUBLICATION
+UPDATE 1
+ERROR:  cannot update table "g2"
+DETAIL:  Replica identity must not contain unpublished generated columns.
+DROP PUBLICATION
+DROP TABLE

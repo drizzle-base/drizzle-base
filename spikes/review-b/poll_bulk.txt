@@ -1,0 +1,1 @@
+{"upto_nchanges":100,"messages_returned":20003,"payload_mb":176.9,"poll_ms":2860,"rss_delta_mb":742}

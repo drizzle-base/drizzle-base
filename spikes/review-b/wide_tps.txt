@@ -1,0 +1,6 @@
+round=1 ri=default number of transactions actually processed: 120214 tps = 20042.648189 (without initial connection time)  wal=69 MB
+round=1 ri=full number of transactions actually processed: 71318 tps = 11890.165930 (without initial connection time)  wal=632 MB
+round=2 ri=default number of transactions actually processed: 133478 tps = 22248.643484 (without initial connection time)  wal=67 MB
+round=2 ri=full number of transactions actually processed: 95790 tps = 15957.186298 (without initial connection time)  wal=828 MB
+round=3 ri=default number of transactions actually processed: 133401 tps = 22232.254994 (without initial connection time)  wal=67 MB
+round=3 ri=full number of transactions actually processed: 98292 tps = 16375.182466 (without initial connection time)  wal=841 MB

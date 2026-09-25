@@ -1,0 +1,12 @@
+nan_eq (PG t)                                    true
+nan_gt (PG t)                                    false
+numdiv 2.5/2 > 1.2 (PG t)                        false
+numeq '1.0' vs '1.00' as decoded text (PG t)     false
+like_nl (PG t)                                   false
+like_bs 'ab' like 'a\%' (PG f)                   false
+like_bs 'a%' like 'a\%' (PG t)                   false
+like_emoji (PG t)                                false
+ilike_kelvin 'K' ilike U+212A (PG t)             false
+ilike_dotted 'İ' ilike 'i' (PG t)                false
+lower('İ') (PG 'i')                              "i̇"
+nondet collation 'Abc'='abc' (PG t)              false

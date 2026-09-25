@@ -1,0 +1,8 @@
+nan_gt|t
+numdiv|t
+numeq|t
+like_nl|t
+like_bs|t|f
+like_emoji|t
+ilike_kelvin|t
+ilike_dotted|t|i

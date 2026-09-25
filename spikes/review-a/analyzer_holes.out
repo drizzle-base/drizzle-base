@@ -1,0 +1,12 @@
+notExists          users:TABLE dropped-conjunct: NOT exists(<select>)
+notInSub           users:TABLE<dropped:1> 
+orWithSub          users:TABLE<dropped:1> 
+scalarSubInSelect  users:INTERVAL[age=30]  posts:KEYQUERY 
+notOr              users:PREDICATE{1p} 
+caseWhen           users:TABLE dropped-conjunct: (<case> = 'Dan')
+recursive          ERROR Error: Syntax error at line 1 col 18: UNPARSED → every mentioned table
+lateralLimit       users:INTERVAL[age=30]  posts:KEYQUERY limit (precision refinement possible: bound by the last row's sort key); join:CROSS JOIN
+distinctOn         posts:TABLE 
+schemaQual         users:INTERVAL[age=30] 
+quoted              unknown-relation:Users; dropped-conjunct: (Users.Age = 30)
+windowFn           posts:TABLE dropped-conjunct: (rn = 1); dropped-conjunct: (x.author_id = $1)

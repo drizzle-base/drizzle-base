@@ -1,10 +1,164 @@
 # DZB-01 — the foundation: reactive Drizzle on Postgres
 
-> **v1, BEFORE review.** Written 24 Sep 2026 from four probes whose code lives in `spikes/` (throwaway; the
+> **v2 — the POST-REVIEW DECISION block below supersedes the body where they disagree.** v1 was written 24 Sep 2026 from four probes whose code lives in `spikes/` (throwaway; the
 > findings are the record). This changes nothing that exists — it defines the kernel of a new project — but it
 > IS kernel and consistency work, so it takes the reinforced ritual: two independent adversarial reviews of this
 > document (A: correctness/concurrency, B: strategy/performance), a POST-REVIEW DECISION block, and a final
 > reviewer on every implementation phase. No code outside `spikes/` before that block exists.
+
+## POST-REVIEW DECISION (v2, 24 Sep 2026) — READ THIS BEFORE THE BODY
+
+Two independent adversarial reviews, both **FIX-FIRST**: **A (correctness/concurrency)**, probes in
+`spikes/review-a/`, and **B (strategy/performance/DX)**, probes in `spikes/review-b/`. Neither asked for a
+redesign: logical decoding (D1), the xid-visibility rule (D7), one snapshot per cycle (D8) and "widen, never
+narrow" all survived, and A confirmed D7 under savepoints and 2PC, D8's snapshot import across connections,
+TOAST under FULL, and that drizzle-orm's bun-sql driver sends every non-transaction statement through
+`client.unsafe()`. B retired risk #1: libpg-query 18.1.5 (WASM) runs under Bun, parses all 76 P1 statements
+incl. INTERSECT/EXCEPT, ~20 µs per parse. The author re-read the probe outputs behind every A-level item
+before accepting it. **Where this block and the body disagree, this block wins.**
+
+### A — blocking (all accepted)
+
+- **P-A1 (RA-A1, RB-M7) — every relation in the tree is a scan.** A dropped conjunct used to drop the tables
+  inside it (`NOT EXISTS`/`NOT IN (subquery)`/`OR … IN (subquery)` lost `posts`; a quoted `"Users"` produced an
+  empty read-set — `review-a/analyzer_holes.out`). Rule: every RangeVar anywhere in the parse tree (conjuncts,
+  CASE, select list, ORDER BY, function args, set-op arms) yields at least a TABLE scan; only a positive
+  top-level conjunct may be dropped; an unknown under NOT/OR is MAYBE (NOT MAYBE = MAYBE). A relation that
+  does not resolve, or is not in the publication (another schema, created at runtime), is OPAQUE. Views and
+  `LANGUAGE sql` functions are expanded (`pg_get_viewdef`, `prosrc`) before falling back to OPAQUE (RB-M6).
+  Corpus gains NOT EXISTS, NOT IN (subquery), OR (subquery), CASE, quoted mixed-case names, recursive CTEs,
+  window functions, DISTINCT ON.
+- **P-A2 (RB-A1, RA-M6) — the transport is streaming replication, not polling.** Polling rebuilds a decoding
+  context from `restart_lsn` on every call: 0.6 ms idle, 41→204 ms per poll while an open transaction pins the
+  slot (`review-b/poll_cost.txt`); `upto_nchanges` is honoured only at transaction boundaries, so one 20 000-row
+  UPDATE came back as one 177 MB poll and +742 MB RSS (`poll_bulk.txt`); a batch that throws after the call
+  returned is lost. v1 streams pgoutput over the walsender (`pg-logical-replication` on `pg`, under Bun:
+  commit→receive p50 0.49 ms, p99 3.7 ms — `stream_probe.txt`), acknowledges its LSN only after a transaction
+  is applied, and processes a transaction message by message. **Per-transaction row cap:** past N rows the
+  images are discarded and the transaction invalidates its tables at table level — memory is bounded by N.
+  D12 is replaced by this item.
+- **P-A3 (RA-A2) — a flush cycle waits for a stream barrier.** The exported snapshot can see commits the stream
+  has not delivered, so one batch could mix two points in time. Cycle: export S → read
+  `pg_current_wal_insert_lsn()` → `pg_logical_emit_message(false, 'drizzlebase.barrier', …)` (pgoutput
+  `messages = true`) → process the stream up to the barrier → re-run at S every entry dirtied by a transaction
+  visible in S; entries dirtied only by transactions not visible in S carry to the next cycle. The dirty bit is
+  cleared at re-registration. A batch is tagged with a cycle id, never with an LSN (no LSN prefix equals a
+  snapshot — P4).
+- **P-A4 (RA-A3) — the recent-commits buffer is pruned against a snapshot taken after the commit streamed.**
+  With no query in flight the old bound emptied the buffer, while a streamed commit can still sit in the next
+  snapshot's `xip` (synchronous replication widens that window). Prune T only when T.xid precedes the xmin of
+  a snapshot taken after T was streamed (fold `pg_snapshot_xmin(pg_current_snapshot())` in on each barrier);
+  never prune to empty on "nothing in flight".
+- **P-A5 (RA-A4, RB-B7) — the driver owns transaction control.** drizzle's `db.transaction()` calls
+  `client.begin()`; on our reserved connection that sent BEGIN (a warning) and COMMIT, committing the outer
+  transaction silently (`review-a/nested_tx.out`: the server log and the snapshot change). The wrapper maps
+  `begin` to a savepoint and implements `savepoint`; it refuses `reserve`, `close`, and any statement whose
+  parse is transaction control (BEGIN/COMMIT/ROLLBACK/SET TRANSACTION). `db.$client` is the wrapper; drizzle's
+  `cache` option is never passed.
+- **P-A6 (RA-A5) — generated columns.** FULL + a publication makes UPDATE/DELETE fail on a table with a
+  generated column unless it is published (`review-a/gen_cols.out`). The publication is created
+  `WITH (publish_generated_columns = stored, publish_via_partition_root = true)`; boot refuses a published
+  table with a VIRTUAL generated column (PG 18 cannot publish them) and runs a trivial UPDATE probe per table.
+- **P-A7 (RA-A6, RB-M4) — read-your-writes by position, decoupled from the flush.** A mutation that writes
+  nothing produces no stream transaction (pgoutput skips empty ones — `review-a/pgoutput.out` §4b), so waiting
+  for its xid hangs. After COMMIT the mutation reads `pg_current_wal_insert_lsn()` on its connection,
+  releases the connection, waits for a barrier past that LSN, and replies tagged with the first cycle id whose
+  snapshot contains its commit. The client resolves the mutation when it has received that cycle's
+  transition — a slow dashboard query in the cycle delays the transition, not the reply. No
+  `pg_current_xact_id()` up front.
+- **P-A8 (RA-A7) — the evaluator is type-directed and tested against Postgres itself.** Nine concrete
+  disagreements (`review-a/js_semantics.out` vs `.pg.out`): float NaN, numeric division truncated, numeric
+  `1.0 = 1.00`, LIKE with `\n`, `\` escapes, astral characters, Kelvin/`İ` under ILIKE, nondeterministic ICU
+  equality. Operations dispatch on the type OID (integer truncation, exact decimal numeric, float NaN/−0);
+  LIKE is dotall, code-point based, honours `\`; ILIKE/lower/upper on non-ASCII answer MAYBE unless the
+  collation is C; nondeterministic collations, citext and enums answer MAYBE for comparison and make key
+  membership TABLE; keys pass a per-type canonicaliser. **A differential test** — random images ×
+  allow-listed expressions, compared with `select <expr> from (values …)` on PG 18 with the production
+  collation, adversarial generators (NaN, ±0, `\n`, `\`, `%`, `_`, astral, Turkish/Greek/Kelvin pairs, numeric
+  scales, DST-crossing timestamptz) — gates every operator on the allow-list.
+
+### M — must hold before the phase that implements it (all accepted)
+
+- **P-M1 (RA-M1) — DDL arrives through the stream.** A rewriting ALTER emits 0 row messages; relation messages
+  are lazy. A `ddl_command_end` + `sql_drop` event trigger emits a transactional
+  `pg_logical_emit_message(true, 'drizzlebase.ddl', …)`: DDL reaches the stream in commit order and
+  invalidates everything and recycles the pool (F7). Boot checks the trigger exists.
+- **P-M2 (RA-M2) — TRUNCATE** invalidates every scan of every listed relation, CASCADE included.
+- **P-M3 (RA-M3, RB-M7) — partitions and inheritance.** `publish_via_partition_root` (P-A6); scans are indexed
+  by OID with a leaf→root map; plain inheritance children map to the parent or the query is OPAQUE; REPLICA
+  IDENTITY FULL is checked on leaves, at boot and after every migrate.
+- **P-M4 (RA-M4) — RLS.** A table with `relrowsecurity`, unless the role bypasses RLS, makes the query OPAQUE in
+  DZB-01; role and settings join the cache key when auth lands.
+- **P-M5 (RA-M5) — xids are compared modulo 2^32** against the snapshot's truncated `xmin`/`xmax`
+  (`TransactionIdPrecedes`), never widened with an epoch read at another time.
+- **P-M6 (RA-M7) — the slot exists before any snapshot is taken.** On boot and on every slot loss (invalidated,
+  or dropped — Neon removes inactive slots, RB-M8): drop every subscription, recreate the slot, THEN let
+  clients re-run. Never `pg_replication_slot_advance` past a backlog.
+- **P-M7 (RA-M9) — an ambiguous COMMIT is not retried.** Retry only 40001/40P01 raised before or at COMMIT; a
+  connection lost during COMMIT answers *committed, confirmation pending* (or checks `pg_xact_status`).
+- **P-M8 (RA-M8) — the oracle judges real images.** It consumes images from the pgoutput decoder (not
+  `to_json`), runs on PG 18 with the production collation, uses the differential test of P-A8, and keeps its
+  canonical (order-free) comparison only for queries without a total ORDER BY.
+- **P-M9 (RB-M1) — FULL is not free on real rows; say so.** On a 20-column table with 4 indexes, a 2 KB jsonb
+  and 6 KB of TOAST, FULL costs 10–16× the WAL per update and −28…−41 % write throughput
+  (`review-b/wide_wal.txt`, `wide_tps.txt`). §1's "≈ 0" held only for P2's 4-column table. The wide-table
+  bench runs in the first phase. A per-table `DEFAULT` identity opt-out is filed (O2).
+- **P-M10 (RB-M2) — keys from the result for DYNAMIC; one transaction per connection per cycle.** For the
+  nested-`with` shape, a re-run with D5's two key queries plus its own transaction does ~1.7k/s against 5–5.7k/s
+  bare (`review-b/rerun_cost.txt`). DYNAMIC keys are read from the result, including the positional
+  `json_build_array` inside RQB's `json_agg`; side queries remain for KEYQUERY only; a key query whose source
+  is TABLE degrades its dependent to TABLE (RA-B2). A connection's share of a cycle runs inside ONE
+  transaction importing the snapshot. The P3 `inner` sabotage and a `keyMismatch` check guard the result keys.
+  D5 is replaced by this item. Multiplexing (`unnest(args) cross join lateral …`, `multiplex.txt`) is filed (O3);
+  D10's cache key is (SQL shape, args) so it stays possible.
+- **P-M11 (RB-M3) — the LIMIT boundary is a tier.** A page (`order by … limit n`) is bounded by the last row's
+  sort key, fetched as n+1 to detect the cut, with minivex's null-region guard; minivex measured 420× fewer
+  recomputes for `take(20)` (`minivex/docs/BENCH.md:621-640`). Plus column pruning in D6: an UPDATE whose
+  changed columns miss the scan's read columns, and whose row keeps matching, is skipped.
+- **P-M12 (RB-M6) — the developer sees the tiers.** A per-function `explain` (tier per scan, dropped conjuncts,
+  OPAQUE reasons) in the CLI and dev overlay; a dev strict mode that throws on OPAQUE/TABLE; per-function
+  re-runs/s and the **useless re-run ratio** (re-run hash equal to the previous one). The purity rule (D15.3)
+  gets a dev-time lint for `Date.now()`/`Math.random()` in handlers — SQL text cannot see them. Non-determinism
+  in SQL is classified by `pg_proc.provolatile` + SQLValueFunction nodes, not a name list (RA-B3).
+- **P-M13 (RB-M5) — the phases are re-sliced: a vertical slice first.** P1/P3 already proved extraction; the
+  unmeasured risks are the transport, FULL's cost, the re-run cost and the product itself. New §4 below.
+- **P-M14 (RB-M8) — hosting and the minivex split are decisions, recorded here.** DZB-01 targets self-hosted or
+  single-tenant Postgres: logical decoding needs a REPLICATION-privileged role (which can read the cluster's
+  WAL) and a slot per database under a cluster-wide `max_replication_slots` — the reason minivex rejected it
+  for shared tenants (`minivex/docs/specs/OOB-01-out-of-band-writes.md:221-225`). The trigger+outbox `Capture`
+  is the shared-cluster path. The promise is **"any Drizzle query is correct; a documented subset is
+  precise"**, shown per function by P-M12's explain — the answer to the landscape (Electric, Zero, Hasura each
+  narrowed the language or gave up precise invalidation). §0 states what drizzlebase buys that minivex's
+  COLS/OOB work does not: the free query language and `pgTable` as the source of truth; the price is FULL
+  identity, a slot, REPLICATION privilege and re-running arbitrary SQL.
+
+### B — accepted, folded into the phases
+
+RA-B1 (append to the buffer before matching, no await), RA-B2 (key-query degradations; anchors form a
+forest), RA-B4 (pin `TimeZone`/`DateStyle`/`IntervalStyle`/`extra_float_digits` on the decoder and the
+evaluator), RA-B5 (Studio/psql at READ COMMITTED sit outside SSI — documented), RA-B6 (results without a total
+ORDER BY are diffed order-insensitively), RB-B1 (LRU over parse + extraction), RB-B2 (auth scoping needs
+taint on `ctx.auth` reads — for the auth spec), RB-B3 (regression benches: an open transaction under load, one
+1M-row UPDATE), RB-B4 (nothing blocks IVM or multi-node).
+
+### Open — for the owner
+
+- **O1** — share the sync protocol and client with minivex as one package, or copy them (RB-M8: two copies
+  drift). Touches minivex; the owner's call.
+- **O2** — per-table `DEFAULT` identity (cheaper writes; UPDATE/DELETE on that table invalidate at table level).
+- **O3** — multiplexed re-runs (Hasura-style) once the useless ratio and re-run cost are measured.
+
+### The phases, re-sliced (supersedes §4)
+
+| Phase | Content | Done when |
+|---|---|---|
+| **DZB-01a** — the vertical slice | Streaming capture (P-A2) + publication/boot/post-migrate checks (P-A6, P-M1, P-M3, P-M6); the driver with transaction control (P-A5); every scan at **TABLE** level (P-A1's rule: all relations, OPAQUE detection); the cycle with barrier + exported snapshot (P-A3, P-A4); mutations with read-your-writes (P-A7, P-M7); functions, WebSocket and React client (quarried); a demo edited live from Drizzle Studio | A Studio edit re-pushes a `with` query in the browser; capture-equivalence, race and flush-consistency properties green with sabotages; benches: reactive latency, **useless re-run ratio**, wide-table write cost, open-transaction and 1M-row regressions |
+| **DZB-01b** — row-level precision | INTERVAL + PREDICATE tiers, the type-directed evaluator (P-A8) with the differential test, the oracle on real images (P-M8) | Useless ratio measurably lower than 01a on the corpus; soundness oracle + sabotages green |
+| **DZB-01c** — joins | DYNAMIC keys from the result, KEYQUERY side queries, degradations (P-M10) | Same gate, on the relational corpus |
+| **DZB-01d** — pages and visibility | LIMIT boundary + column pruning (P-M11); explain, strict mode, metrics, lint (P-M12) | Feed/cursor corpus gate; explain output reviewed |
+
+Each tier must pay for itself against 01a's useless-ratio baseline (the minivex invariant: measure before and
+after). Each phase keeps a final reviewer on its implementation.
 
 ## 0. What and why
 

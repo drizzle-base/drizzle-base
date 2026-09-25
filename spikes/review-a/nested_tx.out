@@ -1,0 +1,21 @@
+{
+  s0: "3112578:3112578:",
+  s1_same_stmt_later: "3112578:3112578:",
+  s3_after_other_txn: "3112580:3112580:",
+  snapshotChanged: true,
+  other: "3112579",
+  s2: null,
+}
+LOG:  execute Pselect 'REVIEWA-MARK-START'$1: select 'REVIEWA-MARK-START'
+LOG:  execute Pbegin isolation level repeatable read$2: begin isolation level repeatable read
+LOG:  execute Pselect pg_current_snapshot()::text as s$3: select pg_current_snapshot()::text as s
+LOG:  statement: BEGIN
+2026-09-25 00:48:48.071 UTC [1560] WARNING:  there is already a transaction in progress
+LOG:  statement: select 'REVIEWA-inside'
+LOG:  statement: COMMIT
+LOG:  execute Pselect pg_current_snapshot()::text as s$3: select pg_current_snapshot()::text as s
+LOG:  execute Pselect txid_current_if_assigned()::text $4: select txid_current_if_assigned()::text as s
+LOG:  execute Pselect pg_current_snapshot()::text as s$3: select pg_current_snapshot()::text as s
+LOG:  execute Pcommit$5: commit
+2026-09-25 00:48:48.090 UTC [1560] WARNING:  there is no transaction in progress
+LOG:  execute Pselect 'REVIEWA-MARK-END'$6: select 'REVIEWA-MARK-END'

@@ -1,0 +1,10 @@
+{"variant":"warmup","conc":8,"reruns":4000,"reruns_per_s":5501,"ms_per_rerun_wall":1.454}
+{"variant":"bare-query","conc":8,"reruns":4000,"reruns_per_s":5676,"ms_per_rerun_wall":1.41}
+{"variant":"D7-txn+snapshot+2keys","conc":8,"reruns":4000,"reruns_per_s":1831,"ms_per_rerun_wall":4.369}
+{"variant":"D8-imported-snapshot+2keys","conc":8,"reruns":4000,"reruns_per_s":1878,"ms_per_rerun_wall":4.259}
+{"variant":"batched-per-conn+keys","conc":8,"reruns":4000,"reruns_per_s":2701,"ms_per_rerun_wall":2.961}
+{"variant":"bare-query","conc":8,"reruns":4000,"reruns_per_s":5012,"ms_per_rerun_wall":1.596}
+{"variant":"D7-txn+snapshot+2keys","conc":8,"reruns":4000,"reruns_per_s":1655,"ms_per_rerun_wall":4.835}
+{"variant":"D8-imported-snapshot+2keys","conc":8,"reruns":4000,"reruns_per_s":1640,"ms_per_rerun_wall":4.877}
+{"variant":"batched-per-conn+keys","conc":8,"reruns":4000,"reruns_per_s":2381,"ms_per_rerun_wall":3.36}
+result_bytes 7907

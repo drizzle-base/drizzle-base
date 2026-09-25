@@ -1,0 +1,6 @@
+{"K":100,"round":0,"separate_8conns_ms":70,"multiplexed_1stmt_ms":28,"rows":100}
+{"K":100,"round":1,"separate_8conns_ms":24,"multiplexed_1stmt_ms":36,"rows":100}
+{"K":100,"round":2,"separate_8conns_ms":25,"multiplexed_1stmt_ms":24,"rows":100}
+{"K":1000,"round":0,"separate_8conns_ms":219,"multiplexed_1stmt_ms":218,"rows":1000}
+{"K":1000,"round":1,"separate_8conns_ms":177,"multiplexed_1stmt_ms":167,"rows":1000}
+{"K":1000,"round":2,"separate_8conns_ms":188,"multiplexed_1stmt_ms":169,"rows":1000}

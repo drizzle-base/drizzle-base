@@ -1,0 +1,4 @@
+stream commit→receive (ms, incl. the insert round trip) {"p50":0.49,"p99":3.73}
+open txn + noise step 0 {"p50":0.74,"p99":629.15}
+open txn + noise step 1 {"p50":0.56,"p99":586.02}
+open txn + noise step 2 {"p50":0.64,"p99":569.38}
