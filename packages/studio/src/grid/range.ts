@@ -74,8 +74,10 @@ export function parseTsv(text: string): string[][] {
         i += 1;
       }
       cells.push(s);
-      if (body[i] === "\t") i += 1;
-      else if (body[i] === "\n") {
+      if (body[i] === "\t") {
+        i += 1;
+        if (i === body.length) cells.push("");
+      } else if (body[i] === "\n") {
         i += 1;
         finishRow();
       }
@@ -86,8 +88,10 @@ export function parseTsv(text: string): string[][] {
       if (tab >= 0 && (nl < 0 || tab < nl)) end = tab;
       else if (nl >= 0) end = nl;
       cells.push(body.slice(i, end));
-      if (end === tab) i = tab + 1;
-      else if (end === nl) {
+      if (end === tab) {
+        i = tab + 1;
+        if (i === body.length) cells.push("");
+      } else if (end === nl) {
         i = nl + 1;
         finishRow();
       } else i = body.length;

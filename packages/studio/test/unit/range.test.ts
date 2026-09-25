@@ -43,6 +43,10 @@ describe("TSV", () => {
     expect(parseTsv(toTsv(grid))).toEqual(grid);
   });
 
+  test("a trailing empty cell on the last row round-trips through toTsv", () => {
+    expect(parseTsv(toTsv([["hello", ""]]))).toEqual([["hello", ""]]);
+  });
+
   test("a trailing newline does not invent an empty row", () => {
     expect(parseTsv("a\tb\n")).toEqual([["a", "b"]]);
   });
