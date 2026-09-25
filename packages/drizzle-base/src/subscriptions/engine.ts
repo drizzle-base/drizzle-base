@@ -96,7 +96,6 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
   >();
   private readonly inflight = new Set<number>(); // tickets of fresh queries not registered yet (start order)
   private readonly cycleListeners = new Set<(id: number) => void>();
-  private readonly retryTimers = new Set<ReturnType<typeof setTimeout>>();
   private ticket = 0;
   private started = 0;
   private generation = 0;
@@ -256,8 +255,6 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
     this.entries.clear();
     this.pending.clear();
     this.buffer.clear();
-    for (const t of this.retryTimers) clearTimeout(t);
-    this.retryTimers.clear();
     for (const w of this.cycleWaiters) w.reject(new EngineDownError());
     this.cycleWaiters = [];
     for (const l of listeners) deliver(l, { kind: "reset", reason });
@@ -273,7 +270,6 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
     this.closed = true;
     this.down = true;
     clearInterval(this.pruneTimer);
-    for (const t of this.retryTimers) clearTimeout(t);
     for (const b of this.barriers.values()) b.reject(new EngineDownError("engine closed"));
     for (const w of this.cycleWaiters) w.reject(new EngineDownError("engine closed"));
     this.cycleWaiters = [];
@@ -289,6 +285,7 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
     this.running = true;
     try {
       while (!this.closed && !this.down && (this.forced || this.registry.dirtyCount > 0)) {
+        const wasForced = this.forced;
         this.forced = false;
         try {
           await this.cycle();
@@ -297,7 +294,8 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
           this.stats.failedCycles++;
           this.opts.onError?.(e);
           this.failures++;
-          this.forced = this.forced || this.cycleWaiters.length > 0;
+          // A forced cycle (a mutation named it) must still happen: nothing may be dirty to bring the loop back.
+          this.forced = this.forced || wasForced || this.cycleWaiters.length > 0;
           await Bun.sleep(Math.min(2_000, 50 * 2 ** this.failures)); // retry: dirty entries must not stay stuck
         }
       }
@@ -338,24 +336,13 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
     }
   }
 
-  // A transient failure (connection, conflict, resources, operator) is never cached as the result: the entry leaves
-  // the dirty set and comes back after a backoff — without spinning cycles meanwhile. After TRANSIENT_TRIES the
-  // error is pushed like any other.
-  private retryLater(entry: CacheEntry<S>): void {
-    this.registry.clearDirty(entry.key);
-    const t = setTimeout(
-      () => {
-        this.retryTimers.delete(t);
-        if (this.entries.get(entry.key) === entry && this.registry.markDirty(entry.key)) this.schedule();
-      },
-      Math.min(2_000, 50 * 2 ** entry.transientTries),
-    );
-    this.retryTimers.add(t);
-  }
-
   private async cycle(): Promise<void> {
     const id = ++this.started;
     const gen = this.generation;
+    // A cycle re-registers its entries with S, an OLDER snapshot than the prune timer's: until it has, it holds a
+    // ticket like a fresh query, so no commit S did not see is pruned before the replay (final review C1).
+    const own = ++this.ticket;
+    this.inflight.add(own);
     const ex = await this.opts.sql.reserve();
     try {
       await ex.unsafe("begin isolation level repeatable read read only");
@@ -386,6 +373,22 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
           )
         : [];
       if (gen !== this.generation) return; // reset while re-running: nothing from before the reset may be pushed
+      // A transient failure (timeout, conflict, lost connection) is never cached as a result, and never lets its
+      // peers go out without it: that would push half a transition (invariant 6), and a mutation's named cycle could
+      // complete without the entry that carries its write. The whole cycle fails and is retried with the loop's
+      // backoff; nothing was registered, so every entry stays dirty. After TRANSIENT_TRIES in a row the error is
+      // pushed like any other.
+      let transient = false;
+      for (const [lane, chunk] of chunks.entries())
+        for (const [i, entry] of chunk.entries()) {
+          const r = results[lane]?.[i];
+          if (!r || r.ok || !isTransient(r.error) || this.entries.get(entry.key) !== entry) continue;
+          if (entry.transientTries >= TRANSIENT_TRIES) continue;
+          entry.transientTries++;
+          this.stats.transientReruns++;
+          transient = true;
+        }
+      if (transient) throw new Error("a re-run failed transiently: the cycle is retried whole");
       const changed: CacheEntry<S>[] = [];
       for (const [lane, chunk] of chunks.entries())
         for (const [i, entry] of chunk.entries()) {
@@ -393,12 +396,6 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
           if (!r) continue;
           this.stats.reruns++;
           if (this.entries.get(entry.key) !== entry) continue; // unsubscribed (or replaced) during the cycle
-          if (!r.ok && isTransient(r.error) && entry.transientTries < TRANSIENT_TRIES) {
-            this.stats.transientReruns++;
-            entry.transientTries++;
-            this.retryLater(entry);
-            continue;
-          }
           entry.transientTries = 0;
           if (r.readSet.volatile.length && entry.shareable) {
             // It turned volatile: give it a private key so a later subscriber never joins (nor replaces) it.
@@ -423,6 +420,7 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
         }
       await ex.unsafe("commit");
       if (gen !== this.generation) return; // a reset during COMMIT: its subscribers were already told
+      this.inflight.delete(own);
       this.pruneBelow(S.xmin, ticketAtExport);
       this.stats.cycles++;
       for (const entry of changed)
@@ -438,6 +436,7 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
         return false;
       });
     } finally {
+      this.inflight.delete(own);
       await ex.unsafe("rollback").catch(() => {});
       ex.release();
     }

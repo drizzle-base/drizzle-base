@@ -81,7 +81,10 @@ under another after a DDL). A/B on `load/runtime/drizzle_overhead.ts`, interleav
 | `runtime.runQuery` (relational) | 6.918 / 7.740 | 2.116 |
 
 Roughly +2 ms per run for a one-table query and +5 ms for the relational one: every lookup is a round trip, and
-nothing is remembered. **Open decision (owner):** this lands for correctness; the cheap cure that keeps it is
+nothing is remembered. **Which path this measures:** `runQuery`, i.e. a fresh subscribe. Inside a cycle,
+`runInSnapshot` keeps one `Catalog` per lane for the whole cycle, so a steady-state re-run pays about (distinct
+names in the lane × one round trip) per cycle, not per run. Sharing one `Catalog` across a cycle's lanes (same
+snapshot, same search_path) would cut that again. **Open decision (owner):** this lands for correctness; the cheap cure that keeps it is
 resolving every relation, function and operator of a run in ONE catalog query (one round trip instead of one per
 lookup). Not taken here: it changes `readset` (kernel), outside this plan.
 

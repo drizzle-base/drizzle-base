@@ -67,16 +67,6 @@ export class Registry<K> {
     return out;
   }
 
-  clearDirty(key: K): void {
-    this.dirty.delete(key);
-  }
-
-  markDirty(key: K): boolean {
-    if (!this.entries.has(key)) return false;
-    this.dirty.add(key);
-    return true;
-  }
-
   dirtyKeys(): K[] {
     return [...this.dirty];
   }

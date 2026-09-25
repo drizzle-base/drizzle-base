@@ -86,8 +86,10 @@ export function parseSnapshot(text: string): Snapshot {
   return { text, xmin: BigInt(xmin), xmax: BigInt(xmax), xip: xip ? xip.split(",").map(BigInt) : [] };
 }
 
-// The catalog is resolved per run and memoised only within it (one connection, one snapshot): a lookup made
-// under one snapshot is never served to a run under another, so a DDL can never leave a stale resolution behind.
+// The catalog is resolved per run and memoised only within it (one connection, one transaction): a lookup made
+// in one run is never served to another. Name resolution itself (the parser, to_regclass) reads Postgres's latest
+// catalog, not the imported snapshot, so this alone does not make a read-set exact across a concurrent DDL: that
+// rests on the subscription layer, where a streamed DDL dirties every entry and the replay catches the rest.
 export class Runtime<S extends Record<string, unknown>> {
   private readonly maxAttempts: number;
 

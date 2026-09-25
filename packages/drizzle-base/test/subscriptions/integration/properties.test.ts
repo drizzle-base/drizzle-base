@@ -15,11 +15,12 @@ const titles = query(async (ctx) =>
 // Postgres computes a snapshot's xmax as latestCompletedXid + 1: an open transaction holding the newest xid sits AT
 // or above xmax, invisible by that rule alone, and never appears in xip. To exercise the xip rule, a later
 // transaction must complete first. The premise is asserted: the held xid is in a snapshot's xip.
-async function pushPastXmax(pool: SQL, held: ReservedSQL): Promise<void> {
+async function pushPastXmax(pool: SQL, held: ReservedSQL): Promise<bigint> {
   const [{ x }] = await held.unsafe("select pg_current_xact_id()::text as x");
   await pool.unsafe(`insert into dzb_app.comments(post_id, body) values (uuidv7(), 'moves xmax past the held xid')`);
   const [{ s }] = await pool.unsafe("select pg_current_snapshot()::text as s");
   expect(String(s).split(":")[2]?.split(",")).toContain(String(x));
+  return BigInt(x as string);
 }
 
 test("a commit its snapshot saw as running reaches the subscription through apply()", async () => {
@@ -51,7 +52,7 @@ test("a commit streamed during the handler is caught by the replay (and not prun
       const held = await pool.reserve();
       await held.unsafe("begin");
       await held.unsafe(`insert into dzb_app.posts(author_id, title) values ('${U}', 'during')`);
-      await pushPastXmax(pool, held);
+      const heldXid = await pushPastXmax(pool, held);
       const r = recorder<string[]>();
       const subscribed = engine.subscribe("gated", gated, {}, r.listener);
       await Bun.sleep(100); // the handler's snapshot exists, with the held xid running
@@ -59,6 +60,10 @@ test("a commit streamed during the handler is caught by the replay (and not prun
       held.release();
       await engine.flush(); // streamed and applied — to nothing registered yet
       await Bun.sleep(300); // longer than pruneEveryMs: a prune that ignored the in-flight query would drop it now
+      // The premise: the database's xmin has passed the held commit, so a prune that ignored the in-flight query
+      // would drop it (another open transaction on the database would pin xmin and make this test vacuous).
+      const [{ xmin }] = await pool.unsafe("select pg_snapshot_xmin(pg_current_snapshot())::text as xmin");
+      expect(BigInt(xmin as string)).toBeGreaterThan(heldXid);
       release();
       await subscribed;
       expect(r.events[0]).toMatchObject({ kind: "value", value: [] }); // the premise: the fresh value missed it

@@ -58,15 +58,4 @@ describe("Registry", () => {
     expect(r.apply(171, txn(["app.users"]))).toEqual([]);
     expect(r.size).toBe(0);
   });
-
-  test("clearDirty and markDirty move a registered key in and out of the dirty set", () => {
-    const r = new Registry<string>();
-    r.register("q", rs(["app.posts"]), vis(100, 100), new RecentCommits());
-    r.apply(150, txn(["app.posts"]));
-    r.clearDirty("q");
-    expect(r.dirtyCount).toBe(0);
-    expect(r.markDirty("q")).toBe(true);
-    expect(r.dirtyKeys()).toEqual(["q"]);
-    expect(r.markDirty("nope")).toBe(false);
-  });
 });
