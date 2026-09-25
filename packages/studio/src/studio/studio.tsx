@@ -1,12 +1,31 @@
-import { ArrowUpDown, Columns3, ListFilter } from "lucide-react";
+import { ArrowUpDown, Columns3, ListFilter, Plus, Trash2 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { type StudioDataSource, type TableInfo, tableId } from "../contract";
-import { DataGrid } from "../grid/data-grid";
+import { type StudioDataSource, StudioDataSourceError, type TableInfo, tableId } from "../contract";
+import {
+  addRow,
+  changeCount,
+  discardRow,
+  EMPTY_DRAFT,
+  findConflicts,
+  isDirty,
+  missingRequired,
+  removeNewRow,
+  resolveConflict,
+  setCell,
+  setNewCell,
+  type TableDraft,
+  toEdits,
+  withoutSaved,
+} from "../edit/draft";
+import { EditBar, type SaveError } from "../edit/edit-bar";
+import { DataGrid, type GridEditing } from "../grid/data-grid";
 import { Button } from "../ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "../ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { applyHeaderSort, PAGE_SIZES, type StudioView, toPageRequest, type ViewChange, viewOfTable } from "../view";
 import { ColumnsPanel } from "./columns-panel";
 import { FilterBar } from "./filter-bar";
+import { cellKey, rowIdOf } from "./format";
 import { Pager } from "./pager";
 import { type ColumnLayout, createPrefs, EMPTY_LAYOUT, layoutColumns } from "./prefs";
 import { Sidebar } from "./sidebar";
@@ -25,6 +44,8 @@ export interface StudioProps {
   notices?: string[];
   /** Separates saved layouts of different databases on one origin. */
   storageKey?: string;
+  /** Told whenever pending edits appear or are all saved/discarded (to block navigation, warn on close). */
+  onDirtyChange?(dirty: boolean): void;
 }
 
 const SELECT = "h-7 rounded-md border border-input bg-transparent px-1.5 text-xs outline-none dark:bg-input/30";
@@ -40,6 +61,7 @@ export function Studio({
   onViewChange,
   notices = [],
   storageKey = "default",
+  onDirtyChange,
 }: StudioProps) {
   const [view, setView] = useControllableView(controlledView, defaultView, onViewChange);
   const prefs = useMemo(() => createPrefs(storageKey), [storageKey]);
@@ -48,6 +70,13 @@ export function Studio({
   const [filtersOpen, setFiltersOpen] = useState(view.filters.length > 0);
   const [countedFor, setCountedFor] = useState<string | null>(null);
   const [layout, setLayoutState] = useState<ColumnLayout>(EMPTY_LAYOUT);
+  // Pending edits of every table, kept while the person moves around: switching tables or Back loses nothing.
+  const [drafts, setDrafts] = useState<Record<string, TableDraft>>({});
+  const [selectedRows, setSelectedRows] = useState<ReadonlySet<string>>(new Set());
+  const [saveError, setSaveError] = useState<SaveError | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -98,6 +127,88 @@ export function Studio({
     setView({ ...view, offset }, { history: "replace" });
   }, [page, view, setView]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new view (table, page, filters) clears the selection
+  useEffect(() => {
+    setSelectedRows(new Set());
+  }, [viewKey]);
+
+  const editable = table !== null && table.kind === "table" && table.primaryKey.length > 0;
+  const draftKey = view.table ?? "";
+  const draft = drafts[draftKey] ?? EMPTY_DRAFT;
+  const updateDraft = (id: string, fn: (d: TableDraft) => TableDraft) =>
+    setDrafts((all) => ({ ...all, [id]: fn(all[id] ?? EMPTY_DRAFT) }));
+  const dirtyTables = new Set(
+    Object.entries(drafts)
+      .filter(([, d]) => isDirty(d))
+      .map(([t]) => t),
+  );
+  const anyDirty = dirtyTables.size > 0;
+  useEffect(() => {
+    onDirtyChange?.(anyDirty);
+  }, [anyDirty, onDirtyChange]);
+
+  const pageRows = table && page ? page.rows.map((row, i) => ({ id: rowIdOf(table.primaryKey, row, i), row })) : [];
+  const conflicts = editable ? findConflicts(draft, pageRows) : [];
+  const missing = table ? missingRequired(draft, table.columns).length : 0;
+
+  const save = async () => {
+    if (!table) return;
+    const id = tableId(table);
+    setSaving(true);
+    setSaveError(null);
+    // The grid stays editable while a save is in flight: on success remove only what was sent.
+    const sent = draft;
+    try {
+      await dataSource.applyEdits(table, toEdits(sent));
+      updateDraft(id, (now) => withoutSaved(now, sent));
+    } catch (e) {
+      const key = e instanceof StudioDataSourceError ? e.key : undefined;
+      setSaveError({
+        message: e instanceof Error ? e.message : String(e),
+        rowId: key ? rowIdOf(table.primaryKey, key, 0) : null,
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteSelected = async () => {
+    if (!table) return;
+    const doomed = pageRows.filter((r) => selectedRows.has(r.id));
+    try {
+      await dataSource.deleteRows(
+        table,
+        doomed.map((r) => Object.fromEntries(table.primaryKey.map((k) => [k, r.row[k] ?? null]))),
+      );
+      updateDraft(tableId(table), (d) => doomed.reduce((acc, r) => discardRow(acc, r.id), d));
+      setSelectedRows(new Set());
+      setConfirmDelete(false);
+      setDeleteError(null);
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const gridEditing: GridEditing | undefined = editable
+    ? {
+        draft,
+        conflicts: new Set(conflicts.map((c) => cellKey(c.rowId, c.column))),
+        selectedRows,
+        onToggleRow: (id) =>
+          setSelectedRows((s) => {
+            const next = new Set(s);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+          }),
+        onToggleAll: (ids) => setSelectedRows((s) => (ids.every((id) => s.has(id)) ? new Set() : new Set(ids))),
+        onEditExisting: (rowId, key, column, value, original) =>
+          updateDraft(draftKey, (d) => setCell(d, rowId, key, column, value, original)),
+        onEditNew: (id, column, value) => updateDraft(draftKey, (d) => setNewCell(d, id, column, value)),
+        onRemoveNew: (id) => updateDraft(draftKey, (d) => removeNewRow(d, id)),
+      }
+    : undefined;
+
   const selectTable = (id: string) => {
     const next = prefs.lastView(id) ?? viewOfTable(id, view.limit);
     setCountedFor(null);
@@ -134,6 +245,7 @@ export function Studio({
         onResize={(column, width, commit) =>
           setLayout({ ...layout, widths: { ...layout.widths, [column]: width } }, commit)
         }
+        editing={gridEditing}
       />
     );
   else if (table) body = <p className="p-4 text-sm text-muted-foreground">Loading…</p>;
@@ -142,7 +254,7 @@ export function Studio({
   return (
     <div className="flex h-full min-h-0 bg-background text-foreground">
       {tables ? (
-        <Sidebar tables={tables} selected={view.table} onSelect={selectTable} />
+        <Sidebar tables={tables} selected={view.table} onSelect={selectTable} dirty={dirtyTables} />
       ) : (
         <div className="w-64 shrink-0 border-r p-3 text-sm text-muted-foreground">
           {loadError ? loadError.message : "Loading…"}
@@ -191,6 +303,23 @@ export function Studio({
                   <ColumnsPanel columns={laid.ordered} layout={layout} onChange={(l) => setLayout(l)} />
                 </PopoverContent>
               </Popover>
+              {editable && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => updateDraft(draftKey, (d) => addRow(d).draft)}
+                >
+                  <Plus />
+                  Add row
+                </Button>
+              )}
+              {editable && selectedRows.size > 0 && (
+                <Button type="button" variant="destructive" size="sm" onClick={() => setConfirmDelete(true)}>
+                  <Trash2 />
+                  {`Delete ${selectedRows.size} ${selectedRows.size === 1 ? "row" : "rows"}`}
+                </Button>
+              )}
             </>
           )}
           <div className="ml-auto flex items-center gap-2">
@@ -235,6 +364,25 @@ export function Studio({
             <ThemeToggle />
           </div>
         </header>
+        {editable && (isDirty(draft) || saveError) && (
+          <EditBar
+            changes={changeCount(draft)}
+            missing={missing}
+            conflicts={conflicts}
+            error={saveError}
+            saving={saving}
+            onSave={() => void save()}
+            onDiscard={() => {
+              updateDraft(draftKey, () => EMPTY_DRAFT);
+              setSaveError(null);
+            }}
+            onResolve={(c, choice) => updateDraft(draftKey, (d) => resolveConflict(d, c, choice))}
+            onDiscardRow={(rowId) => {
+              updateDraft(draftKey, (d) => discardRow(d, rowId));
+              setSaveError(null);
+            }}
+          />
+        )}
         {table && filtersOpen && (
           <FilterBar
             table={table}
@@ -253,6 +401,27 @@ export function Studio({
           </div>
         )}
         <div className="min-h-0 flex-1">{body}</div>
+        <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+          <DialogContent>
+            <DialogTitle>{`Delete ${selectedRows.size} ${selectedRows.size === 1 ? "row" : "rows"}?`}</DialogTitle>
+            <DialogDescription>
+              They are deleted now, for every tab, and cannot be restored from here.
+            </DialogDescription>
+            {deleteError && (
+              <p role="alert" className="text-sm text-destructive">
+                {deleteError}
+              </p>
+            )}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setConfirmDelete(false)}>
+                Cancel
+              </Button>
+              <Button type="button" variant="destructive" onClick={() => void deleteSelected()}>
+                Delete rows
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </main>
     </div>
   );
