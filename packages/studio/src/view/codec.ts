@@ -1,5 +1,5 @@
 import type { FilterOp, Sort } from "../contract";
-import { EMPTY_VIEW, type StudioView, type ViewFilter } from "./view";
+import { EMPTY_VIEW, PAGE_SIZES, type StudioView, type ViewFilter } from "./view";
 
 // Link format, version 1 (PostgREST-like, readable in the address bar):
 //   ?v=1&table=public.users&where=role.in.admin,editor&where=name.isnull&order=age.desc,id.asc&limit=100&offset=200
@@ -82,11 +82,21 @@ function parseOrder(raw: string): Sort[] | null {
   return out;
 }
 
-function parseCount(raw: string | null, fallback: number, min: number, name: string, errors: string[]): number {
+// A link is untrusted input and every page is a live query: it may not ask for more rows than the UI offers.
+const MAX_LIMIT = Math.max(...PAGE_SIZES);
+
+function parseCount(
+  raw: string | null,
+  fallback: number,
+  min: number,
+  max: number,
+  name: string,
+  errors: string[],
+): number {
   if (raw === null) return fallback;
   const n = Number(raw);
-  if (Number.isSafeInteger(n) && n >= min) return n;
-  errors.push(`${name} "${raw}": not a whole number from ${min}`);
+  if (/^\d+$/.test(raw) && Number.isSafeInteger(n) && n >= min && n <= max) return n;
+  errors.push(`${name} "${raw}": not a whole number from ${min}${max < Number.MAX_SAFE_INTEGER ? ` to ${max}` : ""}`);
   return fallback;
 }
 
@@ -127,8 +137,8 @@ export function decodeView(search: string): { view: StudioView; errors: string[]
       table: table ? table : null,
       filters,
       sort: sort ?? [],
-      limit: parseCount(p.get("limit"), EMPTY_VIEW.limit, 1, "limit", errors),
-      offset: parseCount(p.get("offset"), 0, 0, "offset", errors),
+      limit: parseCount(p.get("limit"), EMPTY_VIEW.limit, 1, MAX_LIMIT, "limit", errors),
+      offset: parseCount(p.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER, "offset", errors),
     },
     errors,
   };

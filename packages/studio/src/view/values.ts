@@ -7,6 +7,35 @@ export const NO_VALUE_OPS: FilterOp[] = ["isNull", "isNotNull"];
 const INT = /^-?\d+$/;
 const DECIMAL = /^-?\d+(\.\d+)?$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const TIMESTAMP = /^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,6})?)?)?$/;
+const TIMESTAMPTZ =
+  /^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,6})?)?)?(?:Z|[+-]\d{2}(?::?\d{2})?)?$/;
+const BYTEA = /^\\x(?:[0-9a-f]{2})*$/i;
+
+function isDate(text: string): boolean {
+  const m = DATE.exec(text);
+  if (!m) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const date = new Date(Date.UTC(y, mo - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === mo - 1 && date.getUTCDate() === d;
+}
+
+/** ISO-ish date and time as Postgres accepts them: a real calendar date, hours < 24, minutes and seconds < 60. */
+function isTimestamp(text: string, pattern: RegExp): boolean {
+  const m = pattern.exec(text);
+  if (!m || !isDate(m[1] ?? "")) return false;
+  return Number(m[2] ?? 0) < 24 && Number(m[3] ?? 0) < 60 && Number(m[4] ?? 0) < 60;
+}
+
+function isJson(text: string): boolean {
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const ok = (value: CellValue | undefined): Parsed => ({ ok: true, value });
 const fail = (error: string): Parsed => ({ ok: false, error });
@@ -31,6 +60,16 @@ export function parseScalar(col: ColumnInfo, text: string): Parsed {
     }
     case "uuid":
       return UUID.test(t) ? ok(t.toLowerCase()) : fail(`"${t}" is not a uuid`);
+    case "date":
+      return isDate(t) ? ok(t) : fail(`"${t}" is not a date (YYYY-MM-DD)`);
+    case "timestamp":
+      return isTimestamp(t, TIMESTAMP) ? ok(t) : fail(`"${t}" is not a timestamp (YYYY-MM-DD HH:MM:SS)`);
+    case "timestamptz":
+      return isTimestamp(t, TIMESTAMPTZ) ? ok(t) : fail(`"${t}" is not a timestamp (YYYY-MM-DD HH:MM:SS+00)`);
+    case "json":
+      return isJson(t) ? ok(t) : fail(`"${t}" is not JSON`);
+    case "bytea":
+      return BYTEA.test(t) ? ok(t) : fail(`"${t}" is not \\x followed by hex pairs`);
     default:
       return ok(text);
   }
@@ -80,6 +119,8 @@ export function splitList(text: string): { ok: true; items: string[] } | { ok: f
 
 export function parseFilterValue(col: ColumnInfo, op: FilterOp, text: string): Parsed {
   if (NO_VALUE_OPS.includes(op)) return ok(undefined);
+  // An array compares with an array literal; typing one is not offered yet, so nothing else would mean anything.
+  if (col.kind === "array") return fail("array columns filter by is null or is not null only");
   if (op === "like" || op === "ilike" || op === "notLike") return ok(text);
   if (op !== "in") return parseScalar(col, text);
   const list = splitList(text);

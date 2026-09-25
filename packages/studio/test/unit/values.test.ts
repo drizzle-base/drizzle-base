@@ -33,6 +33,34 @@ describe("parseScalar: text becomes the column's wire value", () => {
   });
 });
 
+describe("parseScalar: every kind that Postgres would refuse says so", () => {
+  test("dates and timestamps", () => {
+    expect(parseScalar(c("date"), "2026-02-28")).toEqual(ok("2026-02-28"));
+    expect(parseScalar(c("date"), "2026-02-30").ok).toBe(false);
+    expect(parseScalar(c("date"), "abc").ok).toBe(false);
+    expect(parseScalar(c("timestamp"), "2026-01-01 10:20:30.5")).toEqual(ok("2026-01-01 10:20:30.5"));
+    expect(parseScalar(c("timestamp"), "2026-01-01T10:20")).toEqual(ok("2026-01-01T10:20"));
+    expect(parseScalar(c("timestamp"), "2026-01-01 25:00").ok).toBe(false);
+    expect(parseScalar(c("timestamptz"), "2026-01-01 10:20:30+00")).toEqual(ok("2026-01-01 10:20:30+00"));
+    expect(parseScalar(c("timestamptz"), "2026-01-01T10:20:30Z")).toEqual(ok("2026-01-01T10:20:30Z"));
+    expect(parseScalar(c("timestamptz"), "yesterday").ok).toBe(false);
+  });
+  test("json must parse; bytea is \\x and hex pairs", () => {
+    expect(parseScalar(c("json"), '{"a": 1}')).toEqual(ok('{"a": 1}'));
+    expect(parseScalar(c("json"), "{a:1}").ok).toBe(false);
+    expect(parseScalar(c("bytea"), "\\x6964")).toEqual(ok("\\x6964"));
+    expect(parseScalar(c("bytea"), "id").ok).toBe(false);
+  });
+  test("an array column compares only with is null / is not null", () => {
+    expect(parseFilterValue(c("array"), "eq", "a")).toEqual({
+      ok: false,
+      error: "array columns filter by is null or is not null only",
+    });
+    expect(parseFilterValue(c("array"), "like", "a%").ok).toBe(false);
+    expect(parseFilterValue(c("array"), "isNull", "")).toEqual(ok(undefined));
+  });
+});
+
 describe("parseFilterValue", () => {
   test("is null takes no value; like keeps the pattern as typed", () => {
     expect(parseFilterValue(c("integer"), "isNull", "junk")).toEqual(ok(undefined));

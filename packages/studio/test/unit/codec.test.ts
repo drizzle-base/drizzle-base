@@ -52,8 +52,16 @@ describe("decodeView", () => {
     expect(v).toEqual(view({ table: "public.users", filters: [{ column: "age", op: "gt", text: "3" }] }));
     expect(errors).toEqual([
       'filter "role.bogus.1": not column.operator.value',
-      'limit "-5": not a whole number from 1',
+      'limit "-5": not a whole number from 1 to 1000',
     ]);
+  });
+  test("a link cannot ask for any page size: digits only, at most the largest page size", () => {
+    for (const limit of ["1000000000", "0x32", "1e3", "0", ""]) {
+      const { view: v, errors } = decodeView(`?table=t&limit=${limit}`);
+      expect({ limit, got: v.limit, errors: errors.length }).toEqual({ limit, got: 50, errors: 1 });
+    }
+    expect(decodeView("?table=t&limit=500").view.limit).toBe(500);
+    expect(decodeView("?table=t&offset=%2B7").errors).toEqual(['offset "+7": not a whole number from 0']);
   });
   test("an unknown version is ignored as a whole", () => {
     expect(decodeView("?v=2&table=public.users")).toEqual({
