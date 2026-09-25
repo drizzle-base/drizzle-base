@@ -46,7 +46,7 @@
   },
   "overrides": [
     {
-      "includes": ["packages/drizzlebase/src/capture/log.ts"],
+      "includes": ["packages/drizzle-base/src/capture/log.ts"],
       "linter": {
         "rules": {
           "suspicious": {

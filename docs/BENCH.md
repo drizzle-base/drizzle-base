@@ -1,4 +1,4 @@
-# drizzlebase — measurements
+# drizzle-base — measurements
 
 Every performance claim in a spec or a commit points here. A row names the machine, the date, the command,
 and what the number measured (which branch of the code it exercised). Re-measure before quoting an old row.

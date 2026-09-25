@@ -148,7 +148,7 @@ export class PgoutputCapture {
         if (adv) {
           let n = 0;
           this.advancer = setInterval(() => {
-            void emitBarrier(adv.sql, `drizzlebase.advance.${++n}`).catch((e) =>
+            void emitBarrier(adv.sql, `drizzle-base.advance.${++n}`).catch((e) =>
               log.warn("advance barrier failed", { error: String(e) }),
             );
           }, adv.everyMs);

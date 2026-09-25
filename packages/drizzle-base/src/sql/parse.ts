@@ -1,7 +1,7 @@
 // The one gate every statement from a function passes. libpg-query is Postgres's own parser compiled to
 // WASM, so "parses here" means "parses in Postgres" — INTERSECT, quoted identifiers, CTEs and all (the spike's
 // JS parser could not, spec F4). The gate also enforces the driver's contract (spec P-A5): one statement per
-// call, and only SELECT/INSERT/UPDATE/DELETE — transactions belong to drizzlebase, DDL to migrations.
+// call, and only SELECT/INSERT/UPDATE/DELETE — transactions belong to drizzle-base, DDL to migrations.
 import { loadModule, parseSync } from "libpg-query";
 
 export type Node = Record<string, unknown>;
@@ -45,7 +45,7 @@ export function parseStatement(sqlText: string): Parsed {
   const kind = KINDS[type];
   if (!kind)
     throw new ForbiddenStatementError(
-      `${type} is not allowed in a function: only SELECT, INSERT, UPDATE and DELETE (drizzlebase owns transactions; DDL belongs to migrations)`,
+      `${type} is not allowed in a function: only SELECT, INSERT, UPDATE and DELETE (drizzle-base owns transactions; DDL belongs to migrations)`,
     );
   const stmt = node[type] as Node;
   // SELECT … INTO parses as a SelectStmt but creates a table: DDL through the back door.

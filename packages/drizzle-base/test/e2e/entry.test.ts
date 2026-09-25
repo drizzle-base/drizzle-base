@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 test("the public entries are the only doors", async () => {
-  const server = await import("drizzlebase/server");
+  const server = await import("drizzle-base/server");
   expect(typeof server.functions).toBe("function");
   expect(typeof server.Runtime).toBe("function");
   // every error class a function can throw is catchable by class from the public door
@@ -14,7 +14,7 @@ test("the public entries are the only doors", async () => {
     "dropCapture",
   ])
     expect(`${name}: ${typeof (server as Record<string, unknown>)[name]}`).toBe(`${name}: function`);
-  for (const hidden of ["drizzlebase/runtime", "drizzlebase/capture", "drizzlebase/src/runtime/index.ts"]) {
+  for (const hidden of ["drizzle-base/runtime", "drizzle-base/capture", "drizzle-base/src/runtime/index.ts"]) {
     const outcome = await import(hidden).then(
       () => "resolved",
       () => "blocked",

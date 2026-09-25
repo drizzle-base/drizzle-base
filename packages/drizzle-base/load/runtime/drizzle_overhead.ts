@@ -1,4 +1,4 @@
-// The owner's question: what does Drizzle cost over raw Bun.sql, and what does drizzlebase's runtime add
+// The owner's question: what does Drizzle cost over raw Bun.sql, and what does drizzle-base's runtime add
 // (a reserved connection, BEGIN/snapshot/COMMIT, the parse gate, the read-set)? Sequential, one connection's
 // worth of work at a time, so the number is latency, not throughput. Run from the package dir:
 //   bun --preload ./test/support/env.ts load/runtime/drizzle_overhead.ts

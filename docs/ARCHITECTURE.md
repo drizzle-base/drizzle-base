@@ -1,6 +1,6 @@
-# drizzlebase — architecture
+# drizzle-base — architecture
 
-One npm package, `drizzlebase`, with public subpaths — the model of Convex (`convex/server`, `convex/react`)
+One npm package, `drizzle-base`, with public subpaths — the model of Convex (`convex/server`, `convex/react`)
 and drizzle-orm (`drizzle-orm/pg-core`). Chosen 25 Sep 2026 over workspace packages + an umbrella (the
 Supabase model): one install, one version, and `exports` already hides every internal file.
 
@@ -8,11 +8,11 @@ Supabase model): one install, one version, and `exports` already hides every int
 
 | Import | For | Status |
 |---|---|---|
-| `drizzlebase/server` | the app's server: `functions()`, `Runtime`, capture setup, errors | DZB-01a-2 |
-| `drizzlebase/client` | framework-free client | DZB-01a-4 |
-| `drizzlebase/react` | React hooks | DZB-01a-4 |
+| `drizzle-base/server` | the app's server: `functions()`, `Runtime`, capture setup, errors | DZB-01a-2 |
+| `drizzle-base/client` | framework-free client | DZB-01a-4 |
+| `drizzle-base/react` | React hooks | DZB-01a-4 |
 
-`drizzle-orm` is a peer dependency (`>=0.45.3 <0.46`, the tested minor): the app's Drizzle and drizzlebase's must be
+`drizzle-orm` is a peer dependency (`>=0.45.3 <0.46`, the tested minor): the app's Drizzle and drizzle-base's must be
 the same copy. Widen the range only after the suite has run against the new minor.
 
 ## Modules (`src/<module>/`, entered only through `index.ts`)
@@ -32,7 +32,7 @@ the same copy. Widen the range only after the suite has run against the new mino
 
 `protocol`, `client` and `react` never import a server module, `pg`, `pg-logical-replication`, `libpg-query`,
 `drizzle-orm`, `bun` or a `node:` builtin — type-only imports included (conservative on purpose). No module imports
-the package's own public entry (`drizzlebase/…`), and nothing under `src/` imports from `test/` or `load/`. A new module is added to `LAYERS` in `test/support/boundaries.ts` before its first file.
+the package's own public entry (`drizzle-base/…`), and nothing under `src/` imports from `test/` or `load/`. A new module is added to `LAYERS` in `test/support/boundaries.ts` before its first file.
 
 ## Tests
 

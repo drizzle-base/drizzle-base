@@ -111,9 +111,9 @@ export function checkBoundaries(files: SourceFile[], pkg: PackageDeps): string[]
           problems.push(`${f.path}: client may not depend on server module ${to}`);
         continue;
       }
-      if (spec === "drizzlebase" || spec.startsWith("drizzlebase/")) {
+      if (spec === "drizzle-base" || spec.startsWith("drizzle-base/")) {
         // Tests may use the public door; a module may not — the self-reference would bypass every layer rule
-        // (a client importing drizzlebase/server would pull pg into the browser bundle).
+        // (a client importing drizzle-base/server would pull pg into the browser bundle).
         if (from !== null)
           problems.push(`${f.path}: imports the package's own public entry ${spec}; import the module instead`);
         continue;

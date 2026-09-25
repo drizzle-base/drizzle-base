@@ -1,6 +1,6 @@
 // Creates and validates what capture depends on. checkCapture lists EVERY problem so boot refuses to start
 // naming them all (fail closed, spec D13/P-A6/P-M1/P-M3): a missing piece means changes that never reach
-// subscriptions, which is the one failure drizzlebase must not have.
+// subscriptions, which is the one failure drizzle-base must not have.
 // Identifiers come from configuration, not from users, and are double-quoted everywhere.
 import type { SQL } from "bun";
 import { DDL_PREFIX } from "./types";
@@ -29,7 +29,7 @@ const lit = (s: string) => `'${s.replace(/'/g, "''")}'`;
 // The DDL signal: a TRANSACTIONAL logical message, so it reaches the stream in commit order with the DDL
 // itself. A rewriting ALTER emits no row changes at all (review A, pgoutput.out §6); this is how it is seen.
 const DDL_FUNCTION = `
-create or replace function drizzlebase_emit_ddl() returns event_trigger language plpgsql as $$
+create or replace function drizzle_base_emit_ddl() returns event_trigger language plpgsql as $$
 begin
   perform pg_logical_emit_message(true, ${lit(DDL_PREFIX)}, coalesce(tg_tag, ''));
 end $$;`;
@@ -43,11 +43,11 @@ export async function ensureCapture(sql: SQL, n: CaptureNames): Promise<void> {
     );
   await sql.unsafe(DDL_FUNCTION);
   for (const [name, event] of [
-    ["drizzlebase_ddl_end", "ddl_command_end"],
-    ["drizzlebase_ddl_drop", "sql_drop"],
+    ["drizzle_base_ddl_end", "ddl_command_end"],
+    ["drizzle_base_ddl_drop", "sql_drop"],
   ] as const) {
     const [t] = await sql`select 1 as x from pg_event_trigger where evtname = ${name}`;
-    if (!t) await sql.unsafe(`create event trigger ${name} on ${event} execute function drizzlebase_emit_ddl()`);
+    if (!t) await sql.unsafe(`create event trigger ${name} on ${event} execute function drizzle_base_emit_ddl()`);
   }
   await setReplicaIdentityFull(sql, n.schema);
   const [slot] = await sql`select 1 as x from pg_replication_slots where slot_name = ${n.slot}`;
@@ -112,7 +112,7 @@ export async function checkCapture(sql: SQL, n: CaptureNames): Promise<string[]>
       `${q(n.schema)}.${q(r.relname)} has VIRTUAL generated column ${q(r.attname)}, which cannot be published`,
     );
 
-  for (const name of ["drizzlebase_ddl_end", "drizzlebase_ddl_drop"]) {
+  for (const name of ["drizzle_base_ddl_end", "drizzle_base_ddl_drop"]) {
     const [t] = await sql`select evtenabled from pg_event_trigger where evtname = ${name}`;
     if (!t || t.evtenabled === "D") problems.push(`event trigger ${name} is missing or disabled`);
   }
@@ -121,7 +121,7 @@ export async function checkCapture(sql: SQL, n: CaptureNames): Promise<string[]>
 
 export async function assertCapture(sql: SQL, n: CaptureNames): Promise<void> {
   const problems = await checkCapture(sql, n);
-  if (problems.length) throw new Error(`drizzlebase cannot start, changes could be lost:\n- ${problems.join("\n- ")}`);
+  if (problems.length) throw new Error(`drizzle-base cannot start, changes could be lost:\n- ${problems.join("\n- ")}`);
 }
 
 export async function dropCapture(sql: SQL, n: CaptureNames): Promise<void> {

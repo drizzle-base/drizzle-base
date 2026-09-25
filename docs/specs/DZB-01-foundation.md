@@ -1,5 +1,8 @@
 # DZB-01 — the foundation: reactive Drizzle on Postgres
 
+> **Name:** the project was renamed **drizzle-base** on 25 Sep 2026 (npm convention for Drizzle complements, e.g.
+> `drizzle-zod`, `drizzle-cursor`); text written before that says "drizzlebase".
+
 > **v2 — the POST-REVIEW DECISION block below supersedes the body where they disagree.** v1 was written 24 Sep 2026 from four probes whose code lives in `spikes/` (throwaway; the
 > findings are the record). This changes nothing that exists — it defines the kernel of a new project — but it
 > IS kernel and consistency work, so it takes the reinforced ritual: two independent adversarial reviews of this

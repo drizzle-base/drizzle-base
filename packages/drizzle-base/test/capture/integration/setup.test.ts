@@ -59,13 +59,13 @@ describe("ensureCapture + checkCapture", () => {
   test("a disabled ddl event trigger is named", async () => {
     await withCaptureSchema(async (sql, n) => {
       await ensureCapture(sql, n);
-      await sql.unsafe(`alter event trigger drizzlebase_ddl_end disable`);
+      await sql.unsafe(`alter event trigger drizzle_base_ddl_end disable`);
       try {
         expect((await checkCapture(sql, n)).join("\n")).toContain(
-          "event trigger drizzlebase_ddl_end is missing or disabled",
+          "event trigger drizzle_base_ddl_end is missing or disabled",
         );
       } finally {
-        await sql.unsafe(`alter event trigger drizzlebase_ddl_end enable`);
+        await sql.unsafe(`alter event trigger drizzle_base_ddl_end enable`);
       }
     });
   });

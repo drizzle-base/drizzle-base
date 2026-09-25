@@ -1,4 +1,4 @@
-// drizzlebase/server — what an application's server code imports. Everything else stays internal; every error
+// drizzle-base/server — what an application's server code imports. Everything else stays internal; every error
 // a function can throw and every type an exported signature uses is reachable from here.
 export {
   assertCapture,

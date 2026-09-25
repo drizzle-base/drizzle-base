@@ -55,8 +55,10 @@ describe("checkBoundaries — each rule refuses its violation", () => {
     );
   });
   test("a module importing the package's own public entry (the self-reference hides the server)", () => {
-    expect(one("src/client/x.ts", `import { Runtime } from "drizzlebase/server";`).join()).toMatch(/own public entry/);
-    expect(one("src/readset/x.ts", `import { Runtime } from "drizzlebase/server";`).join()).toMatch(/own public entry/);
+    expect(one("src/client/x.ts", `import { Runtime } from "drizzle-base/server";`).join()).toMatch(/own public entry/);
+    expect(one("src/readset/x.ts", `import { Runtime } from "drizzle-base/server";`).join()).toMatch(
+      /own public entry/,
+    );
   });
   test("production code importing test or bench code", () => {
     expect(one("src/runtime/x.ts", `import { testSql } from "../../test/support/db";`).join()).toMatch(/outside src/);
