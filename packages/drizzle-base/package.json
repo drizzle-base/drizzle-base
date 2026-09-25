@@ -9,7 +9,7 @@
     "./server": "./src/entry/server.ts"
   },
   "scripts": {
-    "test": "bun test --timeout 200000",
+    "test": "bun --preload ./test/support/env.ts ./test/support/ensure-db.ts && bun test --timeout 200000",
     "test:unit": "bun test --timeout 30000 unit/",
     "typecheck": "tsc -p tsconfig.json"
   },
