@@ -10,6 +10,7 @@ export {
   checkCapture,
   dropCapture,
   ensureCapture,
+  recreateSlot,
   setReplicaIdentityFull,
 } from "./setup";
 export * from "./types";
