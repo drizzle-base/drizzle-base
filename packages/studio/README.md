@@ -1,0 +1,15 @@
+# @drizzle-base/studio
+
+A data browser for drizzle-base: browse Postgres tables, and see every committed write — from another tab, from
+psql, from Drizzle Studio — arrive without a refresh. Private and in development (STUDIO-00).
+
+The UI is written against `StudioDataSource` (`src/contract`). Today it runs on an in-memory mock (`./mock`) that is
+live across browser tabs; later on drizzle-base's admin functions, which must pass the same conformance suite
+(`test/conformance.ts`).
+
+    bun run dev        # the playground on http://127.0.0.1:5488 (?latency=300 to slow the mock down)
+    bun run test:unit  # bun test + happy-dom
+    bun run test:e2e   # Playwright: the two-tab test
+
+It is not Drizzle Studio and not affiliated with Drizzle; `NOTES.md` records what we observed in Drizzle Studio and
+which decisions we took from it.

@@ -154,6 +154,13 @@ serve them:
 - `packages/studio/NOTES.md` records what was observed in Drizzle Studio and the decisions taken from it.
 - `bun run check` green; a fresh reviewer on the branch; the owner merges.
 
+**Progress.** S1 (25 Sep 2026, `docs/superpowers/plans/2026-09-25-studio-00-1-live-readonly-grid.md`): contract,
+live mock, conformance suite, read-only studio (sidebar, virtualised grid, pager, theme), two-tab Playwright test
+with its BroadcastChannel sabotage. The mock's log lives in IndexedDB, and each committed entry travels in the
+BroadcastChannel message: with localStorage, Chromium showed another tab's write later than the message and a push
+was lost. Next: S2 filters, sorts, columns; S3 editing; S4 selection, clipboard, export, foreign keys; S5 import UI,
+structure tab, final review.
+
 ## 6. What happens later (not this session)
 
 When DZB-01a-4 ships the client, a separate phase writes the admin functions (a spec: what an admin key may read
