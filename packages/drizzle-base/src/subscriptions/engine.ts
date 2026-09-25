@@ -5,8 +5,8 @@
 // dirty): export S; a barrier (every commit visible in S applied); re-run the dirty entries whose current value S
 // contains, in S (P-M10); re-register with S (the replay re-dirties what S missed); push the changed values as one
 // batch; tell cycle listeners the cycle completed; prune. Entries S does not contain wait for the next cycle, so no
-// subscriber ever goes back in time. The catalog is resolved per run, never cached across runs: a lookup made under
-// one snapshot can never be served to a run under another (the plan review's A3 class, removed rather than patched).
+// subscriber ever goes back in time. A cycle's lanes share one Catalog (they import the same snapshot); nothing
+// about the catalog survives from one cycle to the next (the plan review's A3 class, removed rather than patched).
 import type { SQL } from "bun";
 import { emitBarrier, lsnToBigInt, type StreamEvent } from "../capture";
 import {
@@ -362,12 +362,14 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
       const lanes = Math.max(1, Math.min(this.opts.connections ?? 4, due.length));
       const chunks: CacheEntry<S>[][] = Array.from({ length: lanes }, () => []);
       for (const [i, e] of due.entries()) chunks[i % lanes]?.push(e);
+      const catalog = this.opts.runtime.createCatalog();
       const results = due.length
         ? await Promise.all(
             chunks.map((c) =>
               this.opts.runtime.runInSnapshot(
                 sid as string,
                 c.map((e) => e.run),
+                catalog,
               ),
             ),
           )

@@ -110,3 +110,30 @@ window, which we cannot.
   round trip.
 - **The CTE-shadow case.** `buildReadSet` decides it from `info === null` and `refs.cteNames`; prefetch stores
   null for an unresolved name, exactly like the loader.
+
+## Measured during implementation (25 Sep 2026) — A does not pay as designed
+
+A/B interleaved (`load/runtime/drizzle_overhead.ts`, `runtime.runQuery` p50, two rounds; load avg ~3.6):
+
+| Variant | prefetch (A) | per-name |
+|---|---|---|
+| builder | 5.51 / 4.98 ms | 4.20 / 4.34 ms |
+| relational | 6.30 / 5.96 ms | 7.69 / 7.34 ms |
+
+The premise was wrong. The cost is not the round trips; it is **planning**. The pool never prepares
+(`prepare: false`), so every catalog statement is re-planned:
+- the batch plans in 1.0–1.5 ms and executes in 0.64 ms (EXPLAIN ANALYZE);
+- a per-name relation lookup is 1.6 ms against a 0.36 ms round trip.
+
+Probes:
+- Bun has no per-query `prepare` option.
+- `EXECUTE name($1, $2)` cannot take bind parameters: Postgres does not pass protocol parameters to utility
+  statements.
+- `PREPARE` over the extended protocol reads the body's `$1` as a protocol parameter, so it must be sent with
+  `.simple()`.
+- A server-side `PREPARE` of the batch, then `EXECUTE` with the payload as a dollar-quoted literal, returns the
+  identical result: **0.94 ms**, against 2.44 ms planned each time.
+
+Status: correctness is done and tested (equivalence per name and per statement, 12 sabotages red; one statement per
+run; one Catalog per cycle). The performance goal is not met. The next step is the owner's call (see the chat of
+25 Sep).

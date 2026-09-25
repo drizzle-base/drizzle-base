@@ -90,8 +90,10 @@ export async function readSetOf(
   searchPath: string,
 ): Promise<ReadSet> {
   const all: ReadSet = { tables: new Set(), opaque: [], volatile: [] };
-  for (const s of stmts) {
-    const one = await buildReadSet(collectRefs(s.stmt), catalog, exec, searchPath);
+  const refs = stmts.map((s) => collectRefs(s.stmt));
+  await catalog.prefetch(refs, exec, searchPath); // one catalog statement for the whole run
+  for (const r of refs) {
+    const one = await buildReadSet(r, catalog, exec, searchPath);
     for (const t of one.tables) all.tables.add(t);
     for (const o of one.opaque) add(all.opaque, o);
     for (const v of one.volatile) add(all.volatile, v);
