@@ -25,8 +25,14 @@ export interface QueryRun<R> {
 }
 export interface MutationRun<R> {
   value: R;
-  commitLsn: string;
+  encoded?: unknown; // the `encode` hook's result, computed before COMMIT
+  commitLsn: string | null; // null: COMMIT succeeded but the WAL position could not be read afterwards
   attempts: number;
+}
+export interface MutationOptions<R> {
+  // Runs on the handler's result INSIDE the transaction: if it throws, the mutation rolls back. The wire uses it to
+  // encode the reply, so a value it cannot send never belongs to a write that committed.
+  encode?: (value: R) => unknown;
 }
 
 export class MutationConflictError extends Error {
@@ -204,17 +210,19 @@ export class Runtime<S extends Record<string, unknown>> {
     }
   }
 
-  async runMutation<A, R>(def: MutationDef<S, A, R>, args: A): Promise<MutationRun<R>> {
+  async runMutation<A, R>(def: MutationDef<S, A, R>, args: A, opts: MutationOptions<R> = {}): Promise<MutationRun<R>> {
     await loadParser();
     for (let attempt = 1; ; attempt++) {
-      let committed: { value: R; attempts: number } | null = null;
+      let committed: { value: R; encoded?: unknown; attempts: number } | null = null;
       const conn = await this.opts.sql.reserve();
       const client = new CapturingClient(conn, "mutation");
       try {
         await conn.unsafe("begin isolation level serializable");
         let value: R;
+        let encoded: unknown;
         try {
           value = await def.handler(this.ctx(client), args);
+          if (opts.encode) encoded = opts.encode(value);
         } catch (e) {
           await conn.unsafe("rollback").catch(() => {});
           const code = sqlState(e);
@@ -241,7 +249,7 @@ export class Runtime<S extends Record<string, unknown>> {
           throw new CommitOutcomeUnknownError(e);
         }
         if (tag === "ROLLBACK") throw new MutationAbortedError();
-        committed = { value, attempts: attempt };
+        committed = opts.encode ? { value, encoded, attempts: attempt } : { value, attempts: attempt };
       } finally {
         client.close();
         try {
@@ -250,7 +258,9 @@ export class Runtime<S extends Record<string, unknown>> {
           // a terminated connection may refuse release; the pool discards it
         }
       }
-      if (committed) return { ...committed, commitLsn: await this.walPosition() };
+      // The barrier, not this position, is what read-your-writes waits on: failing to read it after a successful
+      // COMMIT must not turn a landed write into an error.
+      if (committed) return { ...committed, commitLsn: await this.walPosition().catch(() => null) };
     }
   }
 

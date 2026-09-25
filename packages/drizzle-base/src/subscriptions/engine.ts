@@ -12,6 +12,7 @@ import { emitBarrier, lsnToBigInt, type StreamEvent } from "../capture";
 import {
   isTransient,
   type MutationDef,
+  type MutationOptions,
   parseSnapshot,
   type QueryDef,
   type Runtime,
@@ -48,7 +49,7 @@ export class EngineDownError extends Error {
 export class CommittedUnconfirmedError extends Error {
   override name = "CommittedUnconfirmedError";
   constructor(
-    readonly commitLsn: string,
+    readonly commitLsn: string | null,
     readonly value: unknown,
     cause: unknown,
   ) {
@@ -240,15 +241,19 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
   // commit (its entries are dirty); the first cycle that starts after that exports a snapshot containing the commit.
   // The reply names that cycle; the client resolves when it has received a transition at or after it — a slow
   // re-run delays the transition, never the reply. A confirmation failure is not a mutation failure.
-  async mutate<A, R>(def: MutationDef<S, A, R>, args: A): Promise<{ value: R; cycle: number; commitLsn: string }> {
-    const run = await this.opts.runtime.runMutation(def, args);
+  async mutate<A, R>(
+    def: MutationDef<S, A, R>,
+    args: A,
+    opts: MutationOptions<R> = {},
+  ): Promise<{ value: R; encoded?: unknown; cycle: number; commitLsn: string | null }> {
+    const run = await this.opts.runtime.runMutation(def, args, opts);
     try {
       if (this.down || this.closed) throw new EngineDownError();
       await this.barrier();
       const cycle = this.started + 1;
       this.forced = true;
       this.schedule();
-      return { value: run.value, cycle, commitLsn: run.commitLsn };
+      return { value: run.value, encoded: run.encoded, cycle, commitLsn: run.commitLsn };
     } catch (e) {
       throw new CommittedUnconfirmedError(run.commitLsn, run.value, e);
     }
