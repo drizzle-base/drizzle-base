@@ -214,6 +214,29 @@ describe("read-your-writes on the wire", () => {
     });
   });
 
+  test("a reset during the named cycle still settles a connection that holds no subscription", async () => {
+    await withServer(api, async ({ sql: pool, engine, connect }) => {
+      const c = await connect(); // no subscription: the engine has no listener of this connection to tell
+      let armed = true;
+      const restore = interceptReserved(pool, (q, run) => {
+        if (!isExport(q) || !armed) return undefined;
+        armed = false;
+        engine.reset("the change stream failed");
+        engine.resume();
+        return run();
+      });
+      try {
+        c.send({ t: "mut", id: "m", name: "comments.touch", args: {} });
+        const res = await c.next(is("res", "m"));
+        const named = res.t === "res" ? (res.c as number) : -1;
+        await c.any((f) => f.t === "reset" || (f.t === "txn" && f.c >= named), 2_000);
+        expect(armed).toBe(false); // the premise: the reset hit the named cycle
+      } finally {
+        restore();
+      }
+    });
+  });
+
   test("two pending mutations are both carried", async () => {
     await withServer(api, async ({ connect }) => {
       const c = await connect();
@@ -254,8 +277,24 @@ describe("errors", () => {
     });
   });
 
-  test("an internal failure reaches the client with no detail, pushed or replied", async () => {
-    await withServer(api, async ({ sql: pool, connect }) => {
+  test("an internal failure reaches the client with no detail, pushed or replied — nor the log", async () => {
+    const lines: string[] = [];
+    const real = console.error;
+    console.error = (...a: unknown[]) => void lines.push(a.map(String).join(" "));
+    try {
+      await failures();
+    } finally {
+      console.error = real;
+    }
+    const logged = lines.join("\n");
+    expect(logged).toContain("function failed"); // the premise: the failures were logged
+    expect(logged).toContain('"sqlstate":"22P02"');
+    expect(logged).not.toContain("marker-7f3a");
+    expect(logged).not.toContain("secret detail");
+  });
+
+  const failures = () =>
+    withServer(api, async ({ sql: pool, connect }) => {
       const c = await connect();
       c.send({ t: "sub", id: "s", name: "fails.secret", args: {} });
       expect(await c.next(is("err", "s"))).toEqual({ t: "err", id: "s", code: "internal" });
@@ -272,7 +311,6 @@ describe("errors", () => {
       expect(JSON.stringify(c.frames)).not.toContain("marker-7f3a");
       expect(JSON.stringify(c.frames)).not.toContain("secret detail");
     });
-  });
 
   test("an application error carries its message and data", async () => {
     await withServer(api, async ({ connect }) => {
@@ -330,8 +368,40 @@ describe("limits, origins, cleanup, reset", () => {
         } finally {
           gate.resolve();
         }
+        await c.next(is("upd", "held")); // the held open finishes inside the test, not during teardown
       },
       { maxInFlight: 1 },
+    );
+  });
+
+  test("the server-wide call limit holds a second call until the first frees its slot; a call from a closed socket never runs", async () => {
+    await withServer(
+      api,
+      async ({ sql: pool, handler, connect }) => {
+        const a = await connect();
+        gate = deferred();
+        entered = deferred();
+        gated = true;
+        a.send({ t: "sub", id: "held", name: "slow.names", args: {} });
+        const b = await connect();
+        const quitter = await connect();
+        try {
+          await entered.promise; // A's open holds the only slot
+          b.send({ t: "sub", id: "waits", name: "users.count", args: {} });
+          quitter.send({ t: "mut", id: "gone", name: "comments.touch", args: {} });
+          await Bun.sleep(300);
+          expect(b.frames.some(is("upd", "waits"))).toBe(false); // the premise: B is queued behind A
+          quitter.close();
+          await quitter.closed;
+        } finally {
+          gate.resolve();
+        }
+        await b.next(is("upd", "waits"));
+        for (let i = 0; i < 200 && handler.pendingCalls > 0; i++) await Bun.sleep(10);
+        const [{ n }] = await pool.unsafe("select count(*)::int as n from dzb_app.comments");
+        expect(n).toBe(0); // the mutation of the socket that left was never run
+      },
+      { maxConcurrentCalls: 1 },
     );
   });
 
@@ -344,6 +414,29 @@ describe("limits, origins, cleanup, reset", () => {
         expect((await c.closed).code).not.toBe(1000);
       },
       { maxPayloadLength: 1024 },
+    );
+  });
+
+  test("an explicit origin list admits exactly its origins, and non-browser clients", async () => {
+    await withServer(
+      api,
+      async ({ url, connect }) => {
+        const http = url.replace("ws://", "http://");
+        const upgrade = {
+          Upgrade: "websocket",
+          Connection: "Upgrade",
+          "Sec-WebSocket-Version": "13",
+          "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+        };
+        expect((await fetch(http, { headers: { ...upgrade, Origin: "http://localhost:5173" } })).status).toBe(403);
+        const listed = await connect({ Origin: "https://app.example" });
+        listed.send({ t: "ping" });
+        await listed.next(is("pong"));
+        const none = await connect();
+        none.send({ t: "ping" });
+        await none.next(is("pong"));
+      },
+      { allowedOrigins: ["https://app.example"] },
     );
   });
 

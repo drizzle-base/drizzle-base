@@ -3,7 +3,7 @@
 // driver error's message holds SQL and parameters, which are user data (appsec: no dumps, no leaks). The server
 // log gets the error class and SQLSTATE only, never a message or values.
 import { log } from "../capture";
-import { EncodeError, encodeValue, type WireError } from "../protocol";
+import { encodeValue, type WireError } from "../protocol";
 import { CommitOutcomeUnknownError } from "../runtime";
 import { EngineDownError } from "../subscriptions";
 
@@ -29,8 +29,9 @@ export function toWireError(e: unknown): WireError {
       return e.data === undefined
         ? { code: "app", message: e.message }
         : { code: "app", message: e.message, data: encodeValue(e.data) };
-    } catch (x) {
-      if (!(x instanceof EncodeError)) throw x;
+    } catch {
+      // Unencodable data, or data whose getters throw: never an exception out of here (it would escape a frame
+      // handler as an unhandled rejection, which ends the process).
       return { code: "internal" };
     }
   }

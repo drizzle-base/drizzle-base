@@ -59,3 +59,7 @@ test("nesting deeper than MAX_DEPTH is refused both ways, and an unknown tag is 
   expect(roundTrip(ok)).toEqual(ok);
   expect(() => decodeValue({ $t: "regexp", v: "x" })).toThrow(DecodeError);
 });
+
+test("an own __proto__ key is refused on encode too (assigning it would drop the field silently)", () => {
+  expect(() => encodeValue(JSON.parse('{"__proto__":{"a":1},"b":2}'))).toThrow(EncodeError);
+});

@@ -53,9 +53,10 @@ export function pushOrClose(ws: Pick<ServerWebSocket<unknown>, "send" | "close">
 }
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+// No Origin header: not a browser (a browser always sends one on a WebSocket upgrade), so no ambient authority to
+// abuse — admitted under every setting.
 function originAllowed(origin: string | null, allowed: readonly string[] | "*" | undefined): boolean {
-  if (allowed === "*") return true;
-  if (origin === null) return allowed === undefined;
+  if (allowed === "*" || origin === null) return true;
   if (allowed) return allowed.includes(origin);
   try {
     return LOOPBACK.has(new URL(origin).hostname);
@@ -126,6 +127,10 @@ export function createHandler<S extends Record<string, unknown>>(opts: HandlerOp
     send(conn, { t: "reset" });
   };
 
+  const offReset = engine.onReset(() => {
+    for (const conn of conns) onReset(conn);
+  });
+
   const offCycle = engine.onCycleComplete((c) => {
     for (const conn of touched) {
       if (conn.closed || !conn.buffer.size) continue;
@@ -170,6 +175,7 @@ export function createHandler<S extends Record<string, unknown>>(opts: HandlerOp
     pendingCalls++;
     await calls.acquire();
     try {
+      if (!current()) return; // unsubscribed or closed while it waited for a slot: nobody wants it
       const checked = await checkArgs(def, raw);
       if (!checked.ok) {
         if (current()) conn.subs.delete(id);
@@ -217,6 +223,9 @@ export function createHandler<S extends Record<string, unknown>>(opts: HandlerOp
     pendingCalls++;
     await calls.acquire();
     try {
+      // The socket left while this waited for a slot: its client already failed the call ("connection lost"), so
+      // running it now would write something the client believes never happened.
+      if (conn.closed) return;
       const checked = await checkArgs(def, raw);
       if (!checked.ok) return send(conn, { t: "err", id, code: "invalid_args", message: checked.issues.join("; ") });
       const r = await engine.mutate(def as unknown as MutationDef<S, unknown, unknown>, checked.value, {
@@ -231,7 +240,11 @@ export function createHandler<S extends Record<string, unknown>>(opts: HandlerOp
     } catch (e) {
       if (e instanceof CommittedUnconfirmedError) {
         // It committed; its effect could not be confirmed in the stream. The client resolves at once.
-        return send(conn, { t: "res", id, c: null, value: encodeValue(e.value) });
+        let value: unknown = null;
+        try {
+          value = encodeValue(e.value); // it was encodable before COMMIT; never let a surprise escape
+        } catch {}
+        return send(conn, { t: "res", id, c: null, value });
       }
       const error = toWireError(e);
       if (error.code === "internal") logInternal(e, { fn: name, frame: id });
@@ -307,6 +320,7 @@ export function createHandler<S extends Record<string, unknown>>(opts: HandlerOp
     },
     close(): void {
       offCycle();
+      offReset();
       for (const conn of conns) conn.ws?.close(1001, "server stopping");
     },
   };

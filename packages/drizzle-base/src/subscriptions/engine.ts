@@ -100,6 +100,7 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
   >();
   private readonly inflight = new Set<number>(); // tickets of fresh queries not registered yet (start order)
   private readonly cycleListeners = new Set<(id: number) => void>();
+  private readonly resetListeners = new Set<(reason: string) => void>();
   private ticket = 0;
   private started = 0;
   private generation = 0;
@@ -139,6 +140,13 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
 
   // Every completed cycle, whether or not it pushed anything to a given subscriber: a client waiting for "a
   // transition at or after cycle N" (read-your-writes) needs to hear about cycles that changed none of its queries.
+  // Every reset, told once — including to a server whose connection holds no subscription (and so no listener)
+  // but waits for a mutation's cycle, which a reset during that cycle would otherwise strand.
+  onReset(listener: (reason: string) => void): () => void {
+    this.resetListeners.add(listener);
+    return () => this.resetListeners.delete(listener);
+  }
+
   onCycleComplete(listener: (id: number) => void): () => void {
     this.cycleListeners.add(listener);
     return () => this.cycleListeners.delete(listener);
@@ -278,6 +286,7 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
     for (const w of this.cycleWaiters) w.reject(new EngineDownError());
     this.cycleWaiters = [];
     for (const l of listeners) deliver(l, { kind: "reset", reason });
+    for (const l of this.resetListeners) deliver(l, reason);
   }
 
   resume(): void {
@@ -325,6 +334,8 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
   }
 
   private async barrier(): Promise<void> {
+    // close() rejects the barriers it can see; one registered after it would wait for the full timeout.
+    if (this.closed) throw new EngineDownError("engine closed");
     const id = crypto.randomUUID();
     let resolve!: () => void;
     let reject!: (e: unknown) => void;
@@ -343,6 +354,7 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
       await Promise.race([
         (async () => {
           w.expected = lsnToBigInt(await emitBarrier(this.opts.sql, id));
+          if (this.closed) throw new EngineDownError("engine closed");
           if (w.seen === w.expected) w.resolve();
           await seen;
         })(),
@@ -454,7 +466,8 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
           deliver(l, entry.last);
         }
       // A waiting subscriber that the push above did not reach (the value did not change) still learns that its
-      // value is now current, with this cycle's id; one that it did reach is simply settled.
+      // value is now current, with this cycle's id; one that it did reach is simply settled. (A joiner that arrives
+      // during this cycle's COMMIT can get the pushed value right after its own first value: a harmless repeat.)
       for (const entry of settled) {
         const waiting = [...entry.waiting];
         entry.waiting.clear();

@@ -252,3 +252,40 @@ test("a cycle's lanes share one Catalog: one catalog statement for the whole cyc
     proto.issue = real;
   }
 });
+
+test("a cycle that reaches its barrier after close() ends at once instead of waiting for the barrier timeout", async () => {
+  await withEngine(async ({ sql: pool, engine }) => {
+    await engine.subscribe(
+      "n",
+      query(async (ctx) => (await ctx.db.select().from(users)).length),
+      {},
+      () => {},
+    );
+    const exported = deferred();
+    const gate = deferred();
+    let hold = true;
+    const restore = interceptReserved(pool, (q, run) => {
+      if (!isExport(q) || !hold) return undefined;
+      hold = false;
+      return run().then(async (rows) => {
+        exported.resolve();
+        await gate.promise;
+        return rows;
+      });
+    });
+    try {
+      await pool.unsafe(`insert into dzb_app.users(name) values ('starts a cycle')`);
+      await exported.promise;
+      engine.close(); // the cycle has not registered its barrier yet
+      gate.resolve();
+      const openCycle = async () =>
+        (
+          await pool`select count(*)::int as n from pg_stat_activity where state = 'idle in transaction' and query like '%pg_export_snapshot%'`
+        )[0]?.n;
+      for (let i = 0; i < 50 && (await openCycle()) > 0; i++) await Bun.sleep(20);
+      expect(await openCycle()).toBe(0); // well under the 10 s barrier timeout
+    } finally {
+      restore();
+    }
+  });
+});

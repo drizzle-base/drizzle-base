@@ -27,7 +27,7 @@ function client(url: string, headers?: Record<string, string>): Promise<TestClie
   const ws = headers ? new WebSocket(url, { headers } as unknown as string[]) : new WebSocket(url);
   const frames: ServerFrame[] = [];
   const waiters: { pred: (f: ServerFrame) => boolean; resolve: (f: ServerFrame) => void }[] = [];
-  let seen = 0;
+  const consumed = new Set<ServerFrame>();
   const closed = new Promise<{ code: number; reason: string }>((resolve) =>
     ws.addEventListener("close", (e) => resolve({ code: e.code, reason: e.reason })),
   );
@@ -44,22 +44,18 @@ function client(url: string, headers?: Record<string, string>): Promise<TestClie
     frames,
     send: (frame) => ws.send(JSON.stringify(frame)),
     sendRaw: (text) => ws.send(text),
-    // Waits for the next frame matching `pred` that arrived after the previous next() returned.
+    // The earliest frame matching `pred` that no earlier next() returned. Each frame is consumed once, but frames
+    // whose relative order is not defined (two replies in flight) can be awaited in any order.
     next(pred, ms = 5_000) {
-      const hit = frames.slice(seen).find(pred);
-      if (hit) {
-        seen = frames.indexOf(hit, seen) + 1;
-        return Promise.resolve(hit);
-      }
+      const take = (f: ServerFrame) => {
+        consumed.add(f);
+        return f;
+      };
+      const hit = frames.find((f) => !consumed.has(f) && pred(f));
+      if (hit) return Promise.resolve(take(hit));
       return Promise.race([
         new Promise<ServerFrame>((resolve) =>
-          waiters.push({
-            pred,
-            resolve: (f) => {
-              seen = frames.indexOf(f) + 1;
-              resolve(f);
-            },
-          }),
+          waiters.push({ pred: (f) => !consumed.has(f) && pred(f), resolve: (f) => resolve(take(f)) }),
         ),
         Bun.sleep(ms).then((): never => {
           throw new Error(`no matching frame in ${ms} ms; got ${JSON.stringify(frames)}`);

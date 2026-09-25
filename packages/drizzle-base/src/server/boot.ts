@@ -9,6 +9,7 @@ import { Runtime } from "../runtime";
 import { SubscriptionEngine } from "../subscriptions";
 import type { ApiTree } from "./api";
 import { type Conn, createHandler, type HandlerOptions } from "./handler";
+import { CaptureSupervisor } from "./supervisor";
 
 export interface StartOptions<S extends Record<string, unknown>> {
   connection: PgConnection;
@@ -36,14 +37,15 @@ export async function startDrizzleBase<S extends Record<string, unknown>>(
   const lanes = opts.connections ?? 4;
   const callSlots = opts.maxConcurrentCalls ?? 8;
   const c = opts.connection;
-  // Room for the engine's lanes, its cycle transaction and a barrier, and every concurrent call.
+  // Room for the engine's lanes, its cycle transaction and a barrier, the prune and advance queries, and every
+  // concurrent call; beyond that, statements queue for a connection (never a deadlock: none waits on another).
   const sql = new SQL({
     hostname: c.host,
     port: c.port,
     database: c.database,
     username: c.user,
     password: c.password,
-    max: lanes + 2 + callSlots,
+    max: lanes + 4 + callSlots,
     prepare: false,
   });
   try {
@@ -55,69 +57,39 @@ export async function startDrizzleBase<S extends Record<string, unknown>>(
   const runtime = new Runtime({ sql, schema: opts.schema, publication: opts.names.publication });
   const engine = new SubscriptionEngine({ runtime, sql, connections: lanes });
 
-  let stopped = false;
-  let generation = 0; // errors from an older capture never restart a newer one
-  // Typed through the initializer: it is assigned inside closures, which control-flow narrowing does not see.
-  let capture = null as PgoutputCapture | null;
-  let restarting = false;
-  let failedAgain = false;
-
-  const startCapture = async () => {
-    const mine = ++generation;
-    const cap = new PgoutputCapture({
-      connection: c,
-      names: opts.names,
-      advance: { sql, everyMs: opts.advanceEveryMs ?? 10_000 },
-    });
-    capture = cap;
-    await cap.start({
-      onEvent: (e) => {
-        if (mine === generation) engine.onEvent(e);
-      },
-      onError: () => {
-        if (mine === generation) void restart();
-      },
-    });
-  };
-
-  const restart = async () => {
-    if (stopped) return;
-    if (restarting) {
-      failedAgain = true;
-      return;
-    }
-    restarting = true;
-    engine.reset("the change stream failed");
-    try {
-      for (let attempt = 1; !stopped; attempt++) {
-        failedAgain = false;
-        try {
-          await capture?.stop();
-          await recreateSlot(sql, opts.names.slot);
-          await assertCapture(sql, opts.names);
-          await startCapture();
-          if (failedAgain) continue; // the new capture failed while this restart was still finishing
-          engine.resume();
-          log.info("capture restarted", { slot: opts.names.slot, attempt });
-          return;
-        } catch (e) {
-          log.error("capture restart failed", {
-            slot: opts.names.slot,
-            attempt,
-            error: e instanceof Error ? e.name : typeof e,
-          });
-          await Bun.sleep(Math.min(10_000, 250 * 2 ** (attempt - 1)));
-        }
-      }
-    } finally {
-      restarting = false;
-    }
-  };
+  // A failed capture delivers nothing more (its failure latch), so events need no generation check here; the
+  // supervisor ignores errors from older captures.
+  const supervisor = new CaptureSupervisor({
+    start: async (onError) => {
+      const cap = new PgoutputCapture({
+        connection: c,
+        names: opts.names,
+        advance: { sql, everyMs: opts.advanceEveryMs ?? 10_000 },
+      });
+      await cap.start({ onEvent: (e) => engine.onEvent(e), onError });
+      return cap;
+    },
+    prepare: async () => {
+      await recreateSlot(sql, opts.names.slot);
+      await assertCapture(sql, opts.names);
+    },
+    reset: () => engine.reset("the change stream failed"),
+    resume: () => {
+      engine.resume();
+      log.info("capture restarted", { slot: opts.names.slot });
+    },
+    onRestartError: (e, attempt) =>
+      log.error("capture restart failed", {
+        slot: opts.names.slot,
+        attempt,
+        error: e instanceof Error ? e.name : typeof e,
+      }),
+  });
 
   const handler = createHandler({ ...opts.handler, engine, api: opts.api, maxConcurrentCalls: callSlots });
   let server: ReturnType<typeof Bun.serve<Conn>> | undefined;
   try {
-    await startCapture();
+    await supervisor.start();
     server = Bun.serve<Conn>({
       hostname: opts.hostname ?? "127.0.0.1",
       port: opts.port ?? 3210,
@@ -125,9 +97,8 @@ export async function startDrizzleBase<S extends Record<string, unknown>>(
       websocket: handler.websocket,
     });
   } catch (e) {
-    stopped = true;
+    await supervisor.stop();
     engine.close();
-    await capture?.stop();
     await sql.close();
     throw e;
   }
@@ -138,11 +109,10 @@ export async function startDrizzleBase<S extends Record<string, unknown>>(
     engine,
     runtime,
     async stop() {
-      stopped = true;
       handler.close();
       await bound.stop(true);
+      await supervisor.stop(); // waits for a restart in progress; no capture is left running
       engine.close();
-      await capture?.stop();
       await sql.close();
     },
   };

@@ -57,7 +57,11 @@ export function encodeValue(v: unknown, depth = 0): unknown {
   if (Array.isArray(v)) return v.map((x) => encodeValue(x, depth + 1));
   if (!isPlain(v)) throw new EncodeError(`a ${v.constructor?.name ?? "non-plain"} object cannot be sent`);
   const out: Record<string, unknown> = {};
-  for (const [k, x] of Object.entries(v)) if (x !== undefined) out[k] = encodeValue(x, depth + 1);
+  for (const [k, x] of Object.entries(v)) {
+    // An own __proto__ key (jsonb can hold one) would set the prototype instead of a field: refused, not dropped.
+    if (k === "__proto__") throw new EncodeError('the key "__proto__" cannot be sent');
+    if (x !== undefined) out[k] = encodeValue(x, depth + 1);
+  }
   return "$t" in out ? { $t: "obj", v: out } : out;
 }
 

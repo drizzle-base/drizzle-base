@@ -44,3 +44,12 @@ test("only an application error carries its message; everything else is redacted
   class Weird {}
   expect(toWireError(new DrizzleBaseError("bad data", new Weird()))).toEqual({ code: "internal" });
 });
+
+test("toWireError never throws, whatever the application error holds", () => {
+  const data = {
+    get boom(): never {
+      throw new Error("a getter that throws");
+    },
+  };
+  expect(toWireError(new DrizzleBaseError("x", data))).toEqual({ code: "internal" });
+});
