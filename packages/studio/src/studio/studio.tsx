@@ -1,6 +1,6 @@
 import { ArrowUpDown, Columns3, ListFilter, Plus, Trash2 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { type StudioDataSource, StudioDataSourceError, type TableInfo, tableId } from "../contract";
+import { type Row, type StudioDataSource, StudioDataSourceError, type TableInfo, tableId } from "../contract";
 import { CodeEditorContext, type CodeEditorMode } from "../edit/code-editor";
 import {
   addRow,
@@ -83,7 +83,7 @@ export function Studio({
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [panel, setPanel] = useState<{ table: string; rowId: string } | null>(null);
+  const [panel, setPanel] = useState<{ table: string; rowId: string; held?: Row } | null>(null);
   const [panelWidth, setPanelWidth] = useState(380);
 
   useEffect(() => {
@@ -185,7 +185,9 @@ export function Studio({
       setPanel((p) => {
         const i = sent.inserts.findIndex((r) => r.id === p?.rowId);
         const k = inserted[i];
-        return p && k ? { ...p, rowId: rowIdOf(table.primaryKey, k, 0) } : p;
+        if (!p || !k) return p;
+        const values = sent.inserts[i]?.values ?? {};
+        return { table: p.table, rowId: rowIdOf(table.primaryKey, k, 0), held: { ...values, ...k } };
       });
     } catch (e) {
       const key = e instanceof StudioDataSourceError ? e.key : undefined;
@@ -232,7 +234,7 @@ export function Studio({
         onEditNew: (id, column, value) => updateDraft(draftKey, (d) => setNewCell(d, id, column, value)),
         onRemoveNew: (id) => updateDraft(draftKey, (d) => removeNewRow(d, id)),
         onExpandRow: (rowId) => setPanel({ table: draftKey, rowId }),
-        onFocusRow: (rowId) => setPanel((p) => (p ? { ...p, rowId } : p)),
+        onFocusRow: (rowId) => setPanel((p) => (p ? { table: p.table, rowId } : p)),
       }
     : undefined;
 
@@ -242,14 +244,24 @@ export function Studio({
           const n = draft.inserts.find((r) => r.id === panel.rowId);
           if (n) return { id: n.id, isNew: true, key: null, live: {} };
           const r = pageRows.find((x) => x.id === panel.rowId);
-          return r
-            ? {
-                id: r.id,
-                isNew: false,
-                key: Object.fromEntries(table.primaryKey.map((k) => [k, r.row[k] ?? null])),
-                live: r.row,
-              }
-            : null;
+          if (r) {
+            return {
+              id: r.id,
+              isNew: false,
+              key: Object.fromEntries(table.primaryKey.map((k) => [k, r.row[k] ?? null])),
+              live: r.row,
+            };
+          }
+          // A row we just inserted can land off this page (sort + limit). Keep showing what we wrote, not "deleted".
+          if (panel.held) {
+            return {
+              id: panel.rowId,
+              isNew: false,
+              key: Object.fromEntries(table.primaryKey.map((k) => [k, panel.held?.[k] ?? null])),
+              live: panel.held,
+            };
+          }
+          return null;
         })()
       : null;
 

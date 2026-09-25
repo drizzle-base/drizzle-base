@@ -176,8 +176,11 @@ menu, columns panel and resizing, page size, count on demand (`withTotal`/`hasMo
 `StudioView` a host binds to its URL (the playground does; the studio never touches the URL). S3a (`docs/superpowers/plans/2026-09-25-studio-00-3a-editing.md`): pending edits per table, an atomic,
 conflict-aware save (`applyEdits` with `expected`), live conflicts, typed editors (text, numbers, boolean, enum,
 NULL/DEFAULT, bytea, json and arrays in an expanded editor), add and delete rows. S3b (`docs/superpowers/plans/2026-09-25-studio-00-3b-editors.md`): a date/time picker that edits Postgres text by
-parts, the Expand Row panel on the same draft, CodeMirror 6 loaded on demand; save errors per table. Next: S4 selection, clipboard, export, foreign keys; S5 import UI,
-structure tab, final review.
+  parts, the Expand Row panel on the same draft, CodeMirror 6 loaded on demand; save errors per table. Final
+  review (25 Sep 2026): no Critical; Important fixed — years 0–99 no longer fold to 1900–1999 in the calendar or
+  `parseScalar`; a saved new row that is off this page stays in the panel from the inserted key; a pick in the
+  panel updates the field text so blur cannot undo it. Minors recorded (CodeMirror `json()` on arrays; e2e day
+  matcher). Next: S4 selection, clipboard, export, foreign keys; S5 import UI, structure tab, final review.
 
 ## 6. What happens later (not this session)
 

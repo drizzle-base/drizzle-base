@@ -20,8 +20,9 @@ test("a picked day keeps the time, fraction and offset, and is saved for every t
   await cell.dblclick();
   await a
     .getByRole("group", { name: "Pick a date" })
-    .getByRole("button", { name: /\b10(th)?\b/ })
-    .first()
+    .locator("button")
+    .filter({ hasText: /^10(th)?$/ })
+    .locator("xpath=self::*[not(ancestor::*[@data-outside])]")
     .click();
   const input = a.getByRole("textbox", { name: "Edit created_at" });
   const after = before.replace(/^\d{4}-\d{2}-\d{2}/, (d) => `${d.slice(0, 8)}10`);

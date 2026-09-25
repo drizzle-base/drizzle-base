@@ -1,4 +1,5 @@
 import type { CellValue, ColumnInfo, FilterOp } from "../contract";
+import { parsePgTime } from "../lib/pgtime";
 
 export type Parsed = { ok: true; value: CellValue | undefined } | { ok: false; error: string };
 
@@ -7,26 +8,7 @@ export const NO_VALUE_OPS: FilterOp[] = ["isNull", "isNotNull"];
 const INT = /^-?\d+$/;
 const DECIMAL = /^-?\d+(\.\d+)?$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
-const TIMESTAMP = /^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,6})?)?)?$/;
-const TIMESTAMPTZ =
-  /^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,6})?)?)?(?:Z|[+-]\d{2}(?::?\d{2})?)?$/;
 const BYTEA = /^\\x(?:[0-9a-f]{2})*$/i;
-
-function isDate(text: string): boolean {
-  const m = DATE.exec(text);
-  if (!m) return false;
-  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  const date = new Date(Date.UTC(y, mo - 1, d));
-  return date.getUTCFullYear() === y && date.getUTCMonth() === mo - 1 && date.getUTCDate() === d;
-}
-
-/** ISO-ish date and time as Postgres accepts them: a real calendar date, hours < 24, minutes and seconds < 60. */
-function isTimestamp(text: string, pattern: RegExp): boolean {
-  const m = pattern.exec(text);
-  if (!m || !isDate(m[1] ?? "")) return false;
-  return Number(m[2] ?? 0) < 24 && Number(m[3] ?? 0) < 60 && Number(m[4] ?? 0) < 60;
-}
 
 function isJson(text: string): boolean {
   try {
@@ -61,11 +43,11 @@ export function parseScalar(col: ColumnInfo, text: string): Parsed {
     case "uuid":
       return UUID.test(t) ? ok(t.toLowerCase()) : fail(`"${t}" is not a uuid`);
     case "date":
-      return isDate(t) ? ok(t) : fail(`"${t}" is not a date (YYYY-MM-DD)`);
+      return parsePgTime("date", t) ? ok(t) : fail(`"${t}" is not a date (YYYY-MM-DD)`);
     case "timestamp":
-      return isTimestamp(t, TIMESTAMP) ? ok(t) : fail(`"${t}" is not a timestamp (YYYY-MM-DD HH:MM:SS)`);
+      return parsePgTime("timestamp", t) ? ok(t) : fail(`"${t}" is not a timestamp (YYYY-MM-DD HH:MM:SS)`);
     case "timestamptz":
-      return isTimestamp(t, TIMESTAMPTZ) ? ok(t) : fail(`"${t}" is not a timestamp (YYYY-MM-DD HH:MM:SS+00)`);
+      return parsePgTime("timestamptz", t) ? ok(t) : fail(`"${t}" is not a timestamp (YYYY-MM-DD HH:MM:SS+00)`);
     case "json":
       return isJson(t) ? ok(t) : fail(`"${t}" is not JSON`);
     case "bytea":

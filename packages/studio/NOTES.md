@@ -134,6 +134,10 @@ pending cells, a blue selected-cell border with a 8% fill, a row-hover colour, a
 - Shortcuts resolve on the client to concrete text in the browser's zone (`now` = the click), so the pending cell
   shows the real value and every data source receives plain values; data sources read timestamptz back in UTC.
 - The panel feeds the same draft; it adds conflict and required markers, says when its row left the page, and
-  opens new rows too. It opens from a button in the row's lead cell until the context menu (S4).
+  opens new rows too. It opens from a button in the row's lead cell until the context menu (S4). After a save, a
+  new row that sorted off the current page is still shown from the inserted key and the values we wrote — not
+  the "deleted / moved" empty state.
+- `new Date(year, …)` and `Date.UTC(year, …)` fold years 0–99 into 1900–1999. Calendar days and `parseScalar` go
+  through `calendarDay` / `parsePgTime` (`setFullYear` / `setUTCFullYear`).
 - CodeMirror 6 is its own chunk, fetched on first use (entry: 201 kB gzip; CodeMirror chunk: 102 kB gzip);
   `codeEditor="textarea"` keeps it from ever loading.
