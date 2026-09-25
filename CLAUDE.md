@@ -17,6 +17,7 @@ repo — code, identifiers, comments, docs, commits, PRs — is **English**. A c
 | Doc | What for |
 |---|---|
 | [`README.md`](README.md) | What it is, one screen |
+| [`docs/STATUS.md`](docs/STATUS.md) | **Where things stand**: done, in progress, next, open for the owner, setup on a fresh machine |
 | This `CLAUDE.md` | Invariants, process, paid lessons |
 | [`docs/specs/DZB-01-foundation.md`](docs/specs/DZB-01-foundation.md) | **The spec. Read the POST-REVIEW DECISION block first**; it supersedes the body. Each phase's final review is recorded there |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The single-package layout, module layers, public entries, code rules |
@@ -59,7 +60,8 @@ of it.
    test that fails first; minors are recorded. The phase's review goes into the spec's POST-REVIEW block.
 6. **Branch per phase** (`feat/…`, `fix/…`, `refactor/…`, `chore/…`); the merge into `main` is the owner's call.
    Once the GitHub remote exists: push, open a PR, wait for CI green, hand the owner the link.
-7. **Record**: `docs/BENCH.md` for numbers, the spec for decisions, memory for lessons.
+7. **Record**: `docs/BENCH.md` for numbers, the spec for decisions, `docs/STATUS.md` for where things stand (in the
+   PR that closes the phase), and a new paid lesson in the Gotchas below.
 
 ## Tests — the rules that keep them honest
 
@@ -110,6 +112,21 @@ container (`drizzlebase-pg18`, :5477, db `spike`) belongs to `spikes/` only.
   `unit/`); `ReservedSQL extends SQL`; Bun's `exports` enforcement also applies to self-reference.
 - **The shell is zsh**: no word splitting of `$var` (use a function); macOS has no `timeout`. Never `pkill bun`.
 - **Biome `--unsafe` can delete a file's header comment**: count comment lines before and after a mass fix.
+- **A snapshot's xmax is latestCompletedXid + 1**: an open transaction holding the NEWEST xid is at or above xmax
+  and never appears in xip. A test about xip must complete a later transaction first and assert the xid is in xip.
+- **A random workload can hide the property it tests**: when both sides of an invariant change in every cycle, a
+  missing barrier never shows. Make the one-sided case common, and lag the stream (`withEngine({ streamLagMs })`).
+- **Replies have no defined order**: a test client that consumes frames in arrival order made the WS suite red in 4
+  of 5 runs. `next()` takes the earliest unconsumed match; `any()` exists for unordered replies.
+- **Check `closed` after every await that registers something**: a barrier registered after `close()` waited the
+  full 10 s timeout. The same shape made `stop()` race a capture restart (`CaptureSupervisor`).
+- **The pool never prepares** (`prepare: false`: 0A000 after a schema change), but the catalog statement is
+  PREPAREd server-side: `EXECUTE` takes no bind parameters (hence `dollarQuote`), and `PREPARE` must go through
+  `.simple()` or the extended protocol reads the body's `$1` as a protocol parameter.
+- **`git grep -E` has no `\b` or `\s`**: the pattern matches nothing and the zero reads like a finding. Use `-P`,
+  and first prove the pattern matches a known string.
+- **Worktrees share the Postgres cluster**: each has its own test database, but a long transaction in one pins the
+  xmin every other sees; the tests that depend on it assert that premise and fail loudly.
 - **Drizzle Studio writes directly**: prefer database-side defaults (`uuid().default(sql\`uuidv7()\`)`) over
   `$defaultFn`, which exists only in JS.
 
