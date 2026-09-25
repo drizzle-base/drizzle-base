@@ -6,6 +6,7 @@ import { col, type MockDataset, mockTable, mockView } from "../dataset";
  *   create schema conformance;
  *   create table conformance.items (id serial primary key, label text not null, rank integer, note text);
  *   create table conformance.log (at timestamptz not null default now(), msg text);
+ *   create table conformance.events (id serial primary key, at timestamptz, on_day date);
  *   create view conformance.items_view as select * from conformance.items;
  */
 export function conformanceDataset(): MockDataset {
@@ -24,6 +25,17 @@ export function conformanceDataset(): MockDataset {
         [col("at", "timestamptz", "timestamp with time zone", { nullable: false }), col("msg", "text", "text")],
         [],
         { at: "now" },
+      ),
+      mockTable(
+        "conformance",
+        "events",
+        [
+          col("id", "integer", "integer", { isPrimaryKey: true, nullable: false }),
+          col("at", "timestamptz", "timestamp with time zone"),
+          col("on_day", "date", "date"),
+        ],
+        [],
+        { id: "serial" },
       ),
     ],
     views: [mockView("conformance", "items_view", columns, (read) => read("conformance.items").map((r) => ({ ...r })))],

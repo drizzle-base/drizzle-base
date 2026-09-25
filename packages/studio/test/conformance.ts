@@ -23,6 +23,7 @@ export interface ConformanceBackend {
 const ITEMS = { schema: "conformance", name: "items" };
 const VIEW = { schema: "conformance", name: "items_view" };
 const LOG = { schema: "conformance", name: "log" };
+const EVENTS = { schema: "conformance", name: "events" };
 
 const req = (over: Partial<PageRequest> = {}): PageRequest => ({
   table: ITEMS,
@@ -417,6 +418,40 @@ export function describeConformance(name: string, makeBackend: () => Promise<Con
     it("applyEdits refuses read-only relations", async (open) => {
       const ds = await open();
       await expectCode(ds.applyEdits(VIEW, { inserts: [{ label: "x" }], updates: [] }), "read_only");
+    });
+
+    it("a timestamptz written with an offset reads back in UTC, fraction kept", async (open) => {
+      const ds = await open();
+      await ds.insertRows(EVENTS, [{ at: "2026-01-01 00:30:00.25-03", on_day: "2026-01-01" }]);
+      const w = watch(ds, req({ table: EVENTS }));
+      const row = (await w.latest((p) => p.rows.length === 1)).rows[0];
+      expect(row?.["at"]).toBe("2026-01-01 03:30:00.25+00");
+      expect(row?.["on_day"]).toBe("2026-01-01");
+      w.stop();
+    });
+
+    it("filters and sorts on timestamptz compare instants, whatever the offset", async (open) => {
+      const ds = await open();
+      await ds.insertRows(EVENTS, [{ at: "2026-01-01 10:00:00+00" }, { at: "2026-01-01 09:00:00-03" }]);
+      const w = watch(
+        ds,
+        req({
+          table: EVENTS,
+          // 09:30 UTC: both rows (10:00 UTC and 12:00 UTC) are later; as text, "09:00-03" would not be.
+          filters: [{ column: "at", op: "gt", value: "2026-01-01 11:30:00+02" }],
+          sort: [{ column: "at", dir: "desc" }],
+        }),
+      );
+      const page = await w.latest((p) => p.total !== null);
+      expect(page.rows.map((r) => r["at"])).toEqual(["2026-01-01 12:00:00+00", "2026-01-01 10:00:00+00"]);
+      w.stop();
+    });
+
+    it("a date or time that is not one is refused as invalid_value", async (open) => {
+      const ds = await open();
+      await expectCode(ds.insertRows(EVENTS, [{ on_day: "2026-02-30" }]), "invalid_value");
+      const [k] = await ds.insertRows(EVENTS, [{}]);
+      await expectCode(ds.updateRows(EVENTS, [{ key: k ?? {}, values: { at: "tomorrow-ish" } }]), "invalid_value");
     });
 
     it("unknown tables and columns are reported with their codes", async (open) => {
