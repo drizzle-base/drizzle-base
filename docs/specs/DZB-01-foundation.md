@@ -196,6 +196,28 @@ a caught 40001 is reported as `MutationAbortedError`, not retried; `Catalog.clea
 (P-M1); the parse cache evicts FIFO, not LRU (RB-B1); `runQuery` still takes three round trips for
 BEGIN/snapshot/COMMIT (`docs/BENCH.md`).
 
+### DZB-01a-3 review (subscriptions; plan reviewed twice, final reviewer 25 Sep 2026, verdict "fix first" → fixed)
+
+Two plan reviews (v2, v3) before code; v3 removed the cross-run catalog cache instead of patching it: a catalog
+lookup is memoised within one run only, so a DDL can no longer poison a later run (`Catalog.clear()` from 01a-2's
+deferred list is moot). Found during implementation, by sabotages that stayed green: Postgres computes a
+snapshot's xmax as latestCompletedXid + 1, so an open transaction holding the newest xid is never in xip (the
+held-open tests complete a later transaction first and assert the xid is in xip); the read-your-writes contract is
+cycle COMPLETION (`onCycleComplete`), not "the named cycle pushes"; the two-table property needs a lagging stream
+and a workload where one side is dirty alone. Final review, each fixed with a test red first and red again under
+its sabotage: the prune timer could drop a commit a cycle still re-running at S needed for its replay
+(under-invalidation) → a cycle holds a ticket until it has re-registered; a forced cycle that failed with nothing
+dirty was never retried → it stays forced; a transient re-run let its peers push without it (half a transition,
+a named cycle without the write) → the whole cycle fails and is retried with backoff; tests added for never going
+back in time, re-keying an entry that turns volatile, and a reset during COMMIT.
+**Deferred:** a barrier matched by id only would pass the tests (forging needs WAL access); `rollback` after a
+successful COMMIT (one round trip per cycle); the pool needs `max >= connections + 1`; `reset()` does not reject
+pending barriers; no bound on a cycle's or a fresh query's time; an idle-in-transaction writer pins xmin and the
+buffer is replayed whole on every registration (index it by table, RB-B3); a duplicate barrier id arriving early
+overwrites `seen`. Performance, open for the owner: the per-run catalog costs +2/+5 ms per fresh run
+(`docs/BENCH.md`); cures are one catalog query per run, one `Catalog` per cycle across lanes, or a cross-run
+cache keyed by the DDL stream's generation (needs its own spec).
+
 ## 0. What and why
 
 drizzlebase gives an app written with **plain drizzle-orm** (schema in real columns, migrations by drizzle-kit,

@@ -29,6 +29,9 @@ export function testSql(max = 4): SQL {
     username: pgConfig.user,
     password: pgConfig.password,
     max,
+    // Bun.sql's prepared statements break after a schema change (0A000 on every retry, probed): drizzle-base's
+    // pool never prepares.
+    prepare: false,
   });
 }
 
