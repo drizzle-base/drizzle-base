@@ -38,7 +38,7 @@ test("a query's read-set is touched by the writes that can change it — from a 
 
 			const viaMutation = await step("m", () => rt.runMutation(addPost, {}));
 			const viaStudio = await step("s", () => sql.unsafe(`update dzb_app.users set name = 'edited in Studio' where id = '${U}'`));
-			const unrelated = await step("u", () => sql.unsafe(`insert into dzb_app.comments(post_id, body) values (1, 'not read by the query')`));
+			const unrelated = await step("u", () => sql.unsafe(`insert into dzb_app.comments(post_id, body) values (uuidv7(), 'not read by the query')`));
 
 			expect(viaMutation.some((t) => touches(readSet, t))).toBe(true);
 			expect(viaStudio.some((t) => touches(readSet, t))).toBe(true);
