@@ -67,17 +67,37 @@ const rootError = (e: unknown): unknown => {
 const sqlState = (e: unknown): string | undefined => (rootError(e) as { errno?: unknown })?.errno?.toString();
 const isServerError = (e: unknown) => (rootError(e) as { name?: string })?.name === "PostgresError";
 
+// Errors worth retrying on a later cycle instead of pushing as the query's result: connection (08), conflict (40),
+// resources (53), operator intervention (57), or Bun's own connection-closed error. A handler's plain throw is not.
+export function isTransient(e: unknown): boolean {
+  const code = sqlState(e);
+  if (code !== undefined) return /^(08|40|53|57)/.test(code);
+  return /^ERR_POSTGRES_CONNECTION/.test(String((rootError(e) as { code?: unknown })?.code ?? ""));
+}
+
+export type SnapshotCall<S extends Record<string, unknown>> = (ctx: Ctx<S>) => Promise<unknown>;
+export type SnapshotResult =
+  | { ok: true; value: unknown; readSet: ReadSet }
+  | { ok: false; error: unknown; readSet: ReadSet };
+const SNAPSHOT_ID = /^[0-9A-F]+-[0-9A-F]+-[0-9]+$/i;
+
 export function parseSnapshot(text: string): Snapshot {
   const [xmin = "0", xmax = "0", xip = ""] = text.split(":");
   return { text, xmin: BigInt(xmin), xmax: BigInt(xmax), xip: xip ? xip.split(",").map(BigInt) : [] };
 }
 
+// The catalog is resolved per run and memoised only within it (one connection, one snapshot): a lookup made
+// under one snapshot is never served to a run under another, so a DDL can never leave a stale resolution behind.
 export class Runtime<S extends Record<string, unknown>> {
-  readonly catalog: Catalog;
   private readonly maxAttempts: number;
 
   constructor(private readonly opts: { sql: SQL; schema: S; publication: string; maxAttempts?: number }) {
-    this.catalog = new Catalog(opts.publication);
+    // Bun.sql's prepared statements break after a schema change (0A000 "cached plan must not change result type",
+    // probed on parameterised statements): drizzle-base's pool never prepares.
+    if ((opts.sql as unknown as { options?: { prepare?: boolean } }).options?.prepare !== false)
+      throw new Error(
+        "drizzle-base needs a pool created with prepare: false (Bun.sql's prepared statements break after a schema change)",
+      );
     this.maxAttempts = opts.maxAttempts ?? 5;
   }
 
@@ -97,7 +117,7 @@ export class Runtime<S extends Record<string, unknown>> {
           "select pg_current_snapshot()::text as s, current_setting('search_path') as sp",
         );
         const value = await def.handler(this.ctx(client), args);
-        const readSet = await readSetOf(client.statements, this.catalog, conn, sp as string);
+        const readSet = await readSetOf(client.statements, new Catalog(this.opts.publication), conn, sp as string);
         await conn.unsafe("commit");
         return { value, snapshot: parseSnapshot(s as string), readSet, statements: [...client.statements] };
       } catch (e) {
@@ -106,6 +126,55 @@ export class Runtime<S extends Record<string, unknown>> {
       }
     } finally {
       client.close();
+      try {
+        conn.release();
+      } catch {
+        // a terminated connection may refuse release; the pool discards it
+      }
+    }
+  }
+
+  // Runs each call in the exported snapshot, one transaction on one connection, a savepoint per call (P-M10). A
+  // failing call does not break the others; a read-set that cannot be resolved widens to OPAQUE for that call.
+  async runInSnapshot(snapshotId: string, calls: SnapshotCall<S>[]): Promise<SnapshotResult[]> {
+    if (!SNAPSHOT_ID.test(snapshotId)) throw new Error(`not a snapshot id: ${JSON.stringify(snapshotId)}`);
+    await loadParser();
+    const conn = await this.opts.sql.reserve();
+    const results: SnapshotResult[] = [];
+    try {
+      await conn.unsafe("begin isolation level repeatable read read only");
+      try {
+        await conn.unsafe(`set transaction snapshot '${snapshotId}'`);
+        const [{ sp }] = await conn.unsafe("select current_setting('search_path') as sp");
+        const catalog = new Catalog(this.opts.publication);
+        for (const call of calls) {
+          const client = new CapturingClient(conn, "query");
+          await conn.unsafe("savepoint dzb_call");
+          let outcome: { ok: true; value: unknown } | { ok: false; error: unknown };
+          try {
+            outcome = { ok: true, value: await call(this.ctx(client)) };
+            await conn.unsafe("release savepoint dzb_call");
+          } catch (error) {
+            await conn.unsafe("rollback to savepoint dzb_call");
+            outcome = { ok: false, error };
+          } finally {
+            client.close();
+          }
+          let readSet: ReadSet;
+          try {
+            readSet = await readSetOf(client.statements, catalog, conn, sp as string);
+          } catch (e) {
+            readSet = { tables: new Set(), opaque: [`read-set resolution failed: ${String(e)}`], volatile: [] };
+          }
+          results.push({ ...outcome, readSet });
+        }
+        await conn.unsafe("commit");
+        return results;
+      } catch (e) {
+        await conn.unsafe("rollback").catch(() => {});
+        throw e;
+      }
+    } finally {
       try {
         conn.release();
       } catch {
