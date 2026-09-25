@@ -169,7 +169,9 @@ with its BroadcastChannel sabotage. The mock's log lives in IndexedDB, and each 
 BroadcastChannel message: with localStorage, Chromium showed another tab's write later than the message and a push
 was lost. S2 (`docs/superpowers/plans/2026-09-25-studio-00-2-filters-sort-columns.md`): filter bar, sort panel and header
 menu, columns panel and resizing, page size, count on demand (`withTotal`/`hasMore`), and the view as a serialisable
-`StudioView` a host binds to its URL (the playground does; the studio never touches the URL). Next: S3 editing; S4 selection, clipboard, export, foreign keys; S5 import UI,
+`StudioView` a host binds to its URL (the playground does; the studio never touches the URL). S3a (`docs/superpowers/plans/2026-09-25-studio-00-3a-editing.md`): pending edits per table, an atomic,
+conflict-aware save (`applyEdits` with `expected`), live conflicts, typed editors (text, numbers, boolean, enum,
+NULL/DEFAULT, bytea, json and arrays in an expanded editor), add and delete rows. Next: S3b (date/time picker, Expand Row panel, code editor decision); S4 selection, clipboard, export, foreign keys; S5 import UI,
 structure tab, final review.
 
 ## 6. What happens later (not this session)

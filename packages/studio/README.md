@@ -21,5 +21,8 @@ and back; `change.history` says whether to push or replace. Filter values in a U
 logs: leave `where` out of the URL if that matters for your data. `storageKey` separates saved layouts of different
 databases on one origin.
 
+`onDirtyChange(dirty)` reports pending edits, so a host can warn before navigating away; the studio keeps
+unsaved edits per table while the person moves around.
+
 It is not Drizzle Studio and not affiliated with Drizzle; `NOTES.md` records what we observed in Drizzle Studio and
 which decisions we took from it.
