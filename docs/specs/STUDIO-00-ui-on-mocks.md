@@ -97,6 +97,16 @@ export interface StudioDataSource {
 }
 ```
 
+**Contract changes** (the live version is `packages/studio/src/contract/index.ts`):
+
+- 25 Sep 2026 (S1, after studying Drizzle Studio): `ColumnKind` gains `bigint` and `float`; `ColumnInfo` gains
+  `elementKind` for arrays. Values are typed `CellValue` and travel as Postgres text for every kind JSON cannot
+  carry exactly (bigint, numeric, uuid, dates and times, json, bytea); integer/float are numbers, boolean a boolean,
+  arrays arrays. `FilterOp` gains `notLike` (Drizzle Studio has `NOT LIKE`). Errors are `StudioDataSourceError` with a
+  `code` (`read_only`, `unknown_table`, `unknown_column`, `not_null`, `invalid_value`). Rows are ordered by `sort` and
+  then by the primary key; `subscribePage` never calls back synchronously nor after unsubscribing. Reverse relations
+  are derived in the client from `references`: no contract change.
+
 **The mock** (`createMockDataSource(seed)`): in-memory tables seeded with a realistic dataset (users, posts,
 comments, an enum, a json column, a view, a table without a primary key, a few thousand rows); a
 `BroadcastChannel` so a write in one tab re-pushes the pages open in every tab; an optional artificial latency; and
