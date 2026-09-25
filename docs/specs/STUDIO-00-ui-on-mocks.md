@@ -111,6 +111,10 @@ export interface StudioDataSource {
 - 25 Sep 2026 (S2): `PageRequest.withTotal` (ask for the count) and `Page.hasMore` (rows past this page, no count
   needed). A live page is re-run on every change; counting what a filter keeps can cost more than the page, so the
   UI counts on demand, as Drizzle Studio does (`50+` and a `count(*)` button).
+- 25 Sep 2026 (S3a): `applyEdits(table, { inserts, updates })` is one atomic write (Drizzle Studio's save is not:
+  a failing change is dropped while the others land). An update may carry `expected`, the original values of the
+  columns it changes; a mismatch or a vanished row is refused with code `conflict`, and the error carries the row's
+  `key`. Optimistic concurrency, because a live studio shows other people's writes arriving.
 
 **The mock** (`createMockDataSource(seed)`): in-memory tables seeded with a realistic dataset (users, posts,
 comments, an enum, a json column, a view, a table without a primary key, a few thousand rows); a

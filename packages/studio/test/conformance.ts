@@ -339,6 +339,86 @@ export function describeConformance(name: string, makeBackend: () => Promise<Con
       w.stop();
     });
 
+    it("applyEdits inserts and updates in one write; one push shows both", async (open) => {
+      const ds = await open();
+      const [a] = await ds.insertRows(ITEMS, [{ label: "a" }]);
+      const w = watch(ds, req());
+      const first = await w.latest((p) => p.total === 1);
+      const { inserted } = await ds.applyEdits(ITEMS, {
+        inserts: [{ label: "new" }],
+        updates: [{ key: a ?? {}, values: { label: "A" }, expected: { label: "a" } }],
+      });
+      expect(inserted).toEqual([{ id: expect.any(Number) }]);
+      const next = await w.latest((p) => p.revision > first.revision, "the edit's push");
+      expect(labels(next)).toEqual(["A", "new"]);
+      expect(w.pages.filter((p) => p.revision > first.revision)).toHaveLength(1);
+      w.stop();
+    });
+
+    it("one bad change commits nothing", async (open) => {
+      const ds = await open();
+      const [a] = await ds.insertRows(ITEMS, [{ label: "a" }]);
+      await expectCode(
+        ds.applyEdits(ITEMS, { inserts: [{ rank: 1 }], updates: [{ key: a ?? {}, values: { label: "A" } }] }),
+        "not_null",
+      );
+      const w = watch(ds, req());
+      expect(labels(await w.latest())).toEqual(["a"]);
+      w.stop();
+    });
+
+    it("a stale expected value is a conflict naming the row, and commits nothing", async (open) => {
+      const ds = await open();
+      const other = await open();
+      const [a] = await ds.insertRows(ITEMS, [{ label: "a" }]);
+      await other.updateRows(ITEMS, [{ key: a ?? {}, values: { label: "theirs" } }]);
+      try {
+        await ds.applyEdits(ITEMS, {
+          inserts: [{ label: "also refused" }],
+          updates: [{ key: a ?? {}, values: { label: "mine" }, expected: { label: "a" } }],
+        });
+        throw new Error("expected a conflict");
+      } catch (e) {
+        expect(e).toBeInstanceOf(StudioDataSourceError);
+        expect((e as StudioDataSourceError).code).toBe("conflict");
+        expect((e as StudioDataSourceError).key).toEqual(a);
+      }
+      const w = watch(ds, req());
+      expect(labels(await w.latest())).toEqual(["theirs"]);
+      w.stop();
+    });
+
+    it("an expected value on a row that is gone is a conflict", async (open) => {
+      const ds = await open();
+      const [a] = await ds.insertRows(ITEMS, [{ label: "a" }]);
+      await ds.deleteRows(ITEMS, [a ?? {}]);
+      await expectCode(
+        ds.applyEdits(ITEMS, {
+          inserts: [],
+          updates: [{ key: a ?? {}, values: { label: "x" }, expected: { label: "a" } }],
+        }),
+        "conflict",
+      );
+    });
+
+    it("a matching expected value is applied; empty edits change nothing", async (open) => {
+      const ds = await open();
+      const [a] = await ds.insertRows(ITEMS, [{ label: "a", rank: 1 }]);
+      await ds.applyEdits(ITEMS, {
+        inserts: [],
+        updates: [{ key: a ?? {}, values: { rank: 2 }, expected: { rank: 1 } }],
+      });
+      expect(await ds.applyEdits(ITEMS, { inserts: [], updates: [] })).toEqual({ inserted: [] });
+      const w = watch(ds, req());
+      expect((await w.latest()).rows[0]?.["rank"]).toBe(2);
+      w.stop();
+    });
+
+    it("applyEdits refuses read-only relations", async (open) => {
+      const ds = await open();
+      await expectCode(ds.applyEdits(VIEW, { inserts: [{ label: "x" }], updates: [] }), "read_only");
+    });
+
     it("unknown tables and columns are reported with their codes", async (open) => {
       const ds = await open();
       const bad = watch(ds, req({ filters: [{ column: "nope", op: "isNull" }] }));
