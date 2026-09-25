@@ -116,6 +116,7 @@ export class Runtime<S extends Record<string, unknown>> {
 	async runMutation<A, R>(def: MutationDef<S, A, R>, args: A): Promise<MutationRun<R>> {
 		await loadParser();
 		for (let attempt = 1; ; attempt++) {
+			let committed: { value: R; attempts: number } | null = null;
 			const conn = await this.opts.sql.reserve();
 			const client = new CapturingClient(conn, "mutation");
 			try {
@@ -128,7 +129,7 @@ export class Runtime<S extends Record<string, unknown>> {
 					const code = sqlState(e);
 					if (code && RETRYABLE.has(code)) {
 						if (attempt >= this.maxAttempts) throw new MutationConflictError(code, attempt, e);
-						await Bun.sleep(Math.min(200, 5 * 2 ** attempt) * (0.5 + Math.random()));
+						await backoff(attempt);
 						continue;
 					}
 					throw e;
@@ -140,6 +141,7 @@ export class Runtime<S extends Record<string, unknown>> {
 					const code = sqlState(e);
 					if (isServerError(e) && code && RETRYABLE.has(code)) {
 						if (attempt >= this.maxAttempts) throw new MutationConflictError(code, attempt, e);
+						await backoff(attempt);
 						continue; // a serialization failure at COMMIT rolled the transaction back: safe to retry
 					}
 					// A Postgres error at COMMIT is a definite failure — unless it is a connection (08) or operator
@@ -148,8 +150,7 @@ export class Runtime<S extends Record<string, unknown>> {
 					throw new CommitOutcomeUnknownError(e);
 				}
 				if (tag === "ROLLBACK") throw new MutationAbortedError();
-				const [{ l }] = await conn.unsafe("select pg_current_wal_insert_lsn()::text as l");
-				return { value, commitLsn: l as string, attempts: attempt };
+				committed = { value, attempts: attempt };
 			} finally {
 				client.close();
 				try {
@@ -158,6 +159,24 @@ export class Runtime<S extends Record<string, unknown>> {
 					// a terminated connection may refuse release; the pool discards it
 				}
 			}
+			if (committed) return { ...committed, commitLsn: await this.walPosition() };
+		}
+	}
+
+	// The WAL insert position is global and only moves forward: read on any connection after COMMIT returned, it
+	// is at or past the commit record. Reading it on the pool — not on the function's connection — means a
+	// connection that dies after a successful COMMIT cannot turn a landed write into an error (final review #9).
+	private async walPosition(): Promise<string> {
+		for (let i = 1; ; i++) {
+			try {
+				const [{ l }] = await this.opts.sql`select pg_current_wal_insert_lsn()::text as l`;
+				return l as string;
+			} catch (e) {
+				if (i >= 3) throw e;
+				await Bun.sleep(20 * i);
+			}
 		}
 	}
 }
+
+const backoff = (attempt: number) => Bun.sleep(Math.min(200, 5 * 2 ** attempt) * (0.5 + Math.random()));

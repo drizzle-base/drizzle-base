@@ -179,4 +179,27 @@ describe("Runtime", () => {
 			}
 		});
 	});
+
+	test("a serialization failure raised AT COMMIT (write skew) is retried, and the invariant holds", async () => {
+		await withApp(async (sql0, n) => {
+			await sql0.unsafe(`create table dzb_app.doctors(id int primary key, on_call boolean not null); insert into dzb_app.doctors values (1, true), (2, true)`);
+			const rt = new Runtime({ sql: sql0, schema, publication: n.publication });
+			let arrived = 0;
+			let release!: () => void;
+			const bothWrote = new Promise<void>((r) => { release = r; });
+			const goOff = mutation(async (ctx, a: { id: number }) => {
+				const [row] = await ctx.db.execute<{ c: number }>(sql`select count(*)::int as c from dzb_app.doctors where on_call`);
+				if (row!.c >= 2) await ctx.db.execute(sql`update dzb_app.doctors set on_call = false where id = ${a.id}`);
+				// the first two runs wait for each other, so both have read and written before either commits
+				if (++arrived <= 2) {
+					if (arrived === 2) release();
+					await bothWrote;
+				}
+			});
+			const [a, b] = await Promise.all([rt.runMutation(goOff, { id: 1 }), rt.runMutation(goOff, { id: 2 })]);
+			expect(a.attempts + b.attempts).toBe(3);
+			const [{ c }] = await sql0.unsafe("select count(*)::int as c from dzb_app.doctors where on_call");
+			expect(c).toBe(1); // write skew prevented: one doctor stays on call
+		});
+	});
 });
