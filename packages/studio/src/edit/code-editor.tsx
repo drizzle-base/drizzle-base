@@ -1,4 +1,5 @@
 import { type ComponentType, createContext, useContext, useEffect, useState } from "react";
+import { cn } from "../lib/cn";
 
 export type CodeEditorMode = "codemirror" | "textarea";
 
@@ -46,7 +47,7 @@ export function CodeEditor(props: CodeEditorProps) {
   return (
     <textarea
       aria-label={props.label}
-      className={props.className ? `${TEXTAREA} ${props.className}` : TEXTAREA}
+      className={cn(TEXTAREA, props.className)}
       value={props.value}
       aria-invalid={props.invalid || undefined}
       onChange={(e) => props.onChange(e.target.value)}

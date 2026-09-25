@@ -129,7 +129,11 @@ function Field({ column, value, live, isNew, pending, conflict, missing, onCommi
                 kind={column.kind}
                 text={text}
                 nullable={column.nullable}
-                onPick={(t) => onCommit(t, editing?.original ?? live)}
+                onPick={(t) => {
+                  setText(t ?? "");
+                  setEditing(null);
+                  onCommit(t, editing?.original ?? live);
+                }}
               />
             </PopoverContent>
           </Popover>

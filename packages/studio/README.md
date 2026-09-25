@@ -24,5 +24,8 @@ databases on one origin.
 `onDirtyChange(dirty)` reports pending edits, so a host can warn before navigating away; the studio keeps
 unsaved edits per table while the person moves around.
 
+`codeEditor="textarea"` replaces CodeMirror (json and array editing) with a plain textarea, so its chunk never
+loads — for a strict CSP or a smaller host.
+
 It is not Drizzle Studio and not affiliated with Drizzle; `NOTES.md` records what we observed in Drizzle Studio and
 which decisions we took from it.

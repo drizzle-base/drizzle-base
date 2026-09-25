@@ -79,6 +79,17 @@ describe("the Expand Row panel", () => {
     expect(grid().getByText("Edited 1").closest("[role=gridcell]")?.getAttribute("data-pending")).toBe("true");
   });
 
+  test("switching rows remounts an in-progress field so the typed text never leaks", async () => {
+    setup();
+    await screen.findByText("User 1");
+    const p = await open("User 1");
+    const name = p.getByLabelText("name") as HTMLInputElement;
+    fireEvent.focus(name);
+    fireEvent.change(name, { target: { value: "Edited 1" } });
+    fireEvent.click(grid().getByText("User 2"));
+    expect((panel().getByLabelText("name") as HTMLInputElement).value).toBe("User 2");
+  });
+
   test("a change elsewhere to a field being edited keeps what was typed and becomes a conflict", async () => {
     const { other } = setup();
     await screen.findByText("User 1");
@@ -124,6 +135,20 @@ describe("the Expand Row panel", () => {
     expect([...role.options].map((o) => o.textContent)).not.toContain("NULL");
     type(p.getByLabelText("email"), "new@example.com");
     expect(p.getByLabelText("email").closest("[data-missing]")).toBeNull();
+  });
+
+  test("after save, the panel follows the inserted row even when it is not on this page", async () => {
+    setup();
+    await screen.findByText("User 1");
+    fireEvent.click(screen.getByRole("button", { name: "Add row" }));
+    const newRow = screen.getAllByRole("row").find((r) => r.hasAttribute("data-new")) as HTMLElement;
+    fireEvent.click(within(newRow).getByRole("button", { name: "Expand row" }));
+    type(panel().getByLabelText("email"), "new@example.com");
+    const bar = within(screen.getByRole("region", { name: "Unsaved changes" }));
+    await act(async () => fireEvent.click(bar.getByRole("button", { name: "Save changes" })));
+    await settle();
+    expect(screen.queryByText(/not on this page any more/)).toBeNull();
+    expect((panel().getByLabelText("email") as HTMLInputElement).value).toBe("new@example.com");
   });
 
   test("Close closes it", async () => {

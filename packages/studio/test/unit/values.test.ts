@@ -36,6 +36,7 @@ describe("parseScalar: text becomes the column's wire value", () => {
 describe("parseScalar: every kind that Postgres would refuse says so", () => {
   test("dates and timestamps", () => {
     expect(parseScalar(c("date"), "2026-02-28")).toEqual(ok("2026-02-28"));
+    expect(parseScalar(c("date"), "0099-01-01")).toEqual(ok("0099-01-01"));
     expect(parseScalar(c("date"), "2026-02-30").ok).toBe(false);
     expect(parseScalar(c("date"), "abc").ok).toBe(false);
     expect(parseScalar(c("timestamp"), "2026-01-01 10:20:30.5")).toEqual(ok("2026-01-01 10:20:30.5"));

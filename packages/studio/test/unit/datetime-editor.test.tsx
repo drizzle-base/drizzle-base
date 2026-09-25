@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
-import type { CellValue } from "../../src/contract";
+import type { CellValue, TableInfo } from "../../src/contract";
 import { CellEditor } from "../../src/edit/cell-editor";
 import { DateTimePicker } from "../../src/edit/datetime-picker";
+import { EMPTY_DRAFT, setCell, type TableDraft } from "../../src/edit/draft";
+import { RowPanel } from "../../src/edit/row-panel";
 import { col } from "../../src/mock";
 
 const TSTZ = col("created_at", "timestamptz", "timestamp with time zone", { nullable: false });
@@ -41,6 +43,12 @@ describe("the date/time picker", () => {
     render(<Picker start="2026-09-25 12:43:35.257072+00" />);
     fireEvent.click(day(10));
     expect(text()).toBe("2026-09-10 12:43:35.257072+00");
+  });
+
+  test("picking a day in year 0099 keeps the century (Date years 0–99 are not 1900–1999)", () => {
+    render(<Picker start="0099-01-01" kind="date" />);
+    fireEvent.click(day(10));
+    expect(text()).toBe("0099-01-10");
   });
 
   test("picking an hour keeps everything else", () => {
@@ -114,5 +122,49 @@ describe("the cell editor of a date/time column", () => {
     render(<Editor value="2026-09-25 12:43:35+00" />);
     fireEvent.keyDown(screen.getByLabelText("Edit created_at"), { key: "Escape" });
     expect(out()).toBe("cancel");
+  });
+});
+
+describe("the date/time picker in the Expand Row panel", () => {
+  const table: TableInfo = {
+    schema: "public",
+    name: "t",
+    kind: "table",
+    primaryKey: ["id"],
+    estimatedRows: 1,
+    columns: [
+      col("id", "integer", "int", { isPrimaryKey: true, nullable: false }),
+      col("created_at", "timestamptz", "timestamp with time zone", { nullable: false }),
+    ],
+  };
+  const live = { id: 1, created_at: "2026-09-25 12:43:35.257072+00" };
+
+  test("a picked day survives the field's blur", () => {
+    function Harness() {
+      const [draft, setDraft] = useState<TableDraft>(EMPTY_DRAFT);
+      return (
+        <RowPanel
+          table={table}
+          row={{ id: "1", isNew: false, key: { id: 1 }, live }}
+          draft={draft}
+          conflicts={new Set()}
+          width={380}
+          onResize={() => {}}
+          onEditExisting={(rowId, key, column, value, original) =>
+            setDraft((d) => setCell(d, rowId, key, column, value, original))
+          }
+          onEditNew={() => {}}
+          onRevert={() => {}}
+          onClose={() => {}}
+        />
+      );
+    }
+    render(<Harness />);
+    const input = screen.getByLabelText("created_at") as HTMLInputElement;
+    fireEvent.click(screen.getByRole("button", { name: "Pick a date" }));
+    fireEvent.focus(input);
+    fireEvent.click(day(10));
+    fireEvent.blur(input);
+    expect(input.value).toBe("2026-09-10 12:43:35.257072+00");
   });
 });

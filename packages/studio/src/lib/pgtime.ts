@@ -44,6 +44,14 @@ function utcDate(year: number, month: number, day: number, hour = 0, minute = 0,
   return d;
 }
 
+/** A local calendar day. `new Date(y, m, d)` reads years 0–99 as 1900–1999; setFullYear does not. */
+export function calendarDay(year: number, month: number, day: number): Date {
+  const d = new Date(0);
+  d.setFullYear(year, month - 1, day);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 function fromUtcDate(kind: TimeKind, d: Date, fraction: string, offset: number | null): PgTime {
   return {
     kind,

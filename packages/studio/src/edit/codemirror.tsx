@@ -11,6 +11,7 @@ import {
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers } from "@codemirror/view";
 import { useEffect, useRef } from "react";
+import { cn } from "../lib/cn";
 import type { CodeEditorProps } from "./code-editor";
 
 const theme = EditorView.theme({
@@ -87,7 +88,10 @@ export function CodeMirrorEditor({ label, value, onChange, onBlur, onSubmit, inv
     <div
       ref={host}
       data-invalid={invalid || undefined}
-      className={`h-64 w-full overflow-hidden rounded-lg border border-input data-invalid:border-destructive ${className ?? ""}`}
+      className={cn(
+        "h-64 w-full overflow-hidden rounded-lg border border-input data-invalid:border-destructive",
+        className,
+      )}
     />
   );
 }

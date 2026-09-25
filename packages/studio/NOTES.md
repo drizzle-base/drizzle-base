@@ -114,3 +114,30 @@ pending cells, a blue selected-cell border with a 8% fill, a row-hover colour, a
   pending edits; closing the tab warns; `onDirtyChange` lets a host block its own navigation.
 - Required values of a new row are checked before saving; enum/boolean offer NULL only on nullable columns.
 - Delete stays immediate with a confirmation, as in Drizzle Studio.
+
+## Editors (S3b, observed 25 Sep 2026)
+
+- A date/timestamp cell opens its input plus a popover: `NULL / now / today / tomorrow / yesterday`, a
+  react-day-picker month and, for timestamps, hour/minute/second columns. A shortcut writes the literal word
+  (`now`), which Postgres resolves at save time.
+- **Defects we do not copy:** picking a day on a timestamptz drops the time, the microseconds and the offset
+  (`2026-09-10 00:00:00`, read in the session's zone); the calendar neither shows the current value nor follows
+  what is typed; `NULL` is offered on NOT NULL columns.
+- Expand Row is a non-modal, resizable side panel of every column; its edits are the grid's pending edits (Save
+  and Discard in the toolbar and in its footer); an edited field gets an amber border and a ↺; the panel follows
+  the selected row.
+- CodeMirror (line numbers, folding, highlighting) for json and arrays, in the panel and the cell editor.
+
+## Decisions taken from this (S3b)
+
+- Date/time text is edited by parts (`src/lib/pgtime.ts`): a picked day or hour keeps everything else.
+- Shortcuts resolve on the client to concrete text in the browser's zone (`now` = the click), so the pending cell
+  shows the real value and every data source receives plain values; data sources read timestamptz back in UTC.
+- The panel feeds the same draft; it adds conflict and required markers, says when its row left the page, and
+  opens new rows too. It opens from a button in the row's lead cell until the context menu (S4). After a save, a
+  new row that sorted off the current page is still shown from the inserted key and the values we wrote — not
+  the "deleted / moved" empty state.
+- `new Date(year, …)` and `Date.UTC(year, …)` fold years 0–99 into 1900–1999. Calendar days and `parseScalar` go
+  through `calendarDay` / `parsePgTime` (`setFullYear` / `setUTCFullYear`).
+- CodeMirror 6 is its own chunk, fetched on first use (entry: 201 kB gzip; CodeMirror chunk: 102 kB gzip);
+  `codeEditor="textarea"` keeps it from ever loading.

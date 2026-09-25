@@ -2,6 +2,7 @@ import type { MouseEvent } from "react";
 import { cn } from "../lib/cn";
 import {
   browserOffset,
+  calendarDay,
   formatPgTime,
   type PgTime,
   parsePgTime,
@@ -65,7 +66,7 @@ export function DateTimePicker({ kind, text, nullable, now = () => new Date(), o
   const base = (): PgTime => current ?? shortcut(kind, "today", now(), browserOffset(now()));
   const pick = (t: PgTime) => onPick(formatPgTime(t));
   // The calendar's Date is a local calendar day: only its year, month and day are read, never its instant.
-  const selected = current ? new Date(current.year, current.month - 1, current.day) : undefined;
+  const selected = current ? calendarDay(current.year, current.month, current.day) : undefined;
   return (
     <div className="flex">
       <div className="flex min-w-24 flex-col gap-0.5 border-r p-1.5">
