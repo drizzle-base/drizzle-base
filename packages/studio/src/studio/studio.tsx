@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { type PageRequest, type StudioDataSource, type TableInfo, tableId } from "../contract";
 import { DataGrid } from "../grid/data-grid";
 import { Pager } from "./pager";
+import { EMPTY_LAYOUT, layoutColumns } from "./prefs";
 import { Sidebar } from "./sidebar";
 import { ThemeToggle } from "./theme";
 import { usePage } from "./use-page";
@@ -68,7 +69,18 @@ export function Studio({ dataSource, pageSize = 50 }: StudioProps) {
         {error.message}
       </p>
     );
-  else if (table && page) body = <DataGrid table={table} page={page} changed={changed} />;
+  else if (table && page)
+    body = (
+      <DataGrid
+        table={table}
+        page={page}
+        changed={changed}
+        columns={layoutColumns(table.columns, EMPTY_LAYOUT).visible}
+        sort={[]}
+        onSort={() => {}}
+        onResize={() => {}}
+      />
+    );
   else if (table) body = <p className="p-4 text-sm text-muted-foreground">Loading…</p>;
   else body = <p className="p-4 text-sm text-muted-foreground">Pick a table on the left.</p>;
 
