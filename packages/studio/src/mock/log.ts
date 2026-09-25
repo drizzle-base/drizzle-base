@@ -174,11 +174,12 @@ export async function createBrowserLog(name: string, deps: Partial<BrowserLogDep
       new Promise<number | null>((resolve, reject) => {
         const tx = db.transaction([ENTRIES, META], "readwrite");
         let appended: LogEntry | null = null;
+        let caughtUp = false;
         let failure: unknown = null;
         const storedEpoch = tx.objectStore(META).get("epoch");
         const stored = tx.objectStore(ENTRIES).getAll();
         stored.onsuccess = () => {
-          absorb((storedEpoch.result as number | undefined) ?? 0, stored.result as LogEntry[]);
+          caughtUp = absorb((storedEpoch.result as number | undefined) ?? 0, stored.result as LogEntry[]);
           try {
             const e = build();
             if (e) {
@@ -194,11 +195,15 @@ export async function createBrowserLog(name: string, deps: Partial<BrowserLogDep
           if (appended) {
             entries.push(appended);
             channel.postMessage({ type: "entry", epoch, entry: appended } satisfies Message);
-            queueMicrotask(notify);
           }
+          // Entries caught up on here are dropped as stale when their own message arrives: announce them now.
+          if (appended || caughtUp) queueMicrotask(notify);
           resolve(appended?.seq ?? null);
         };
-        tx.onabort = () => reject(failure ?? tx.error ?? new Error("commit aborted"));
+        tx.onabort = () => {
+          if (caughtUp) queueMicrotask(notify);
+          reject(failure ?? tx.error ?? new Error("commit aborted"));
+        };
       }),
     onCommit(listener) {
       listeners.add(listener);

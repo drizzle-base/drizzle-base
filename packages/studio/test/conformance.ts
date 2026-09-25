@@ -176,12 +176,16 @@ export function describeConformance(name: string, makeBackend: () => Promise<Con
     it("unsubscribing stops pushes", async (open) => {
       const ds = await open();
       const w = watch(ds, req());
+      const control = watch(ds, req());
       await w.latest();
+      await control.latest();
       w.stop();
       const count = w.pages.length;
       await ds.insertRows(ITEMS, [{ label: "unseen" }]);
-      await new Promise((r) => setTimeout(r, 100));
+      // The premise: this insert does push to a page that is still open.
+      await control.latest((p) => labels(p).includes("unseen"), "the insert on the control subscription");
       expect(w.pages.length).toBe(count);
+      control.stop();
     });
 
     it("filters, with SQL NULL semantics, combined with AND", async (open) => {
@@ -261,6 +265,23 @@ export function describeConformance(name: string, makeBackend: () => Promise<Con
       await expectCode(ds.insertRows(ITEMS, [{ label: "ok" }, { rank: 1 }]), "not_null");
       const w = watch(ds, req());
       expect((await w.latest()).total).toBe(0);
+      w.stop();
+    });
+
+    it("a primary key already taken is refused, on insert and on update, and commits nothing", async (open) => {
+      const ds = await open();
+      const [a, b] = await ds.insertRows(ITEMS, [{ label: "a" }, { label: "b" }]);
+      await expectCode(ds.insertRows(ITEMS, [{ id: a?.["id"] ?? null, label: "clash" }]), "unique_violation");
+      await expectCode(
+        ds.insertRows(ITEMS, [
+          { id: 99, label: "x" },
+          { id: 99, label: "y" },
+        ]),
+        "unique_violation",
+      );
+      await expectCode(ds.updateRows(ITEMS, [{ key: b ?? {}, values: { id: a?.["id"] ?? null } }]), "unique_violation");
+      const w = watch(ds, req());
+      expect(labels(await w.latest())).toEqual(["a", "b"]);
       w.stop();
     });
 

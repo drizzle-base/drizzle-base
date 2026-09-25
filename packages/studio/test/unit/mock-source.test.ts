@@ -126,6 +126,10 @@ describe("mock data source", () => {
     await log.reset();
     await tick();
     expect(pages.at(-1)?.total).toBe(3000);
+    // The contract: a page pushed because of a change carries a higher revision than any page before it.
+    const revisions = pages.map((p) => p.revision);
+    expect(revisions).toEqual([...revisions].sort((x, y) => x - y));
+    expect(new Set(revisions).size).toBe(revisions.length);
   });
 
   test("latency delays the first page", async () => {
@@ -145,8 +149,17 @@ describe("mock data source", () => {
       () => {},
     );
     await tick();
+    const invoices: Page[] = [];
+    ds.subscribePage(
+      { table: { schema: "billing", name: "invoices" }, filters: [], sort: [], limit: 1, offset: 0 },
+      (p) => invoices.push(p),
+      () => {},
+    );
+    await tick();
     await ds.insertRows({ schema: "billing", name: "invoices" }, [{ amount_cents: 1 }]);
     await tick();
+    // The premise: the write happened and did push where it changed something.
+    expect(invoices.map((p) => p.total)).toEqual([100, 101]);
     expect(pages).toHaveLength(1);
   });
 });

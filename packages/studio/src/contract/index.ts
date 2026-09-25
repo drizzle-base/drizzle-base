@@ -107,7 +107,13 @@ export interface Page {
 
 export type Unsubscribe = () => void;
 
-export type StudioErrorCode = "read_only" | "unknown_table" | "unknown_column" | "not_null" | "invalid_value";
+export type StudioErrorCode =
+  | "read_only"
+  | "unknown_table"
+  | "unknown_column"
+  | "not_null"
+  | "unique_violation"
+  | "invalid_value";
 
 export class StudioDataSourceError extends Error {
   override readonly name = "StudioDataSourceError";

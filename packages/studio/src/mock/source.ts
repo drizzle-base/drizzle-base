@@ -78,6 +78,8 @@ export function createMockDataSource(opts: MockOptions): MockDataSource {
   const subs = new Set<Subscription>();
   let tables = new Map<string, LiveTable>();
   let seq = 0;
+  // Pages carry `revision`, not `seq`: seq restarts at 0 on a reset, and a revision must only grow.
+  let revision = 0;
   let epoch: string | null = null;
 
   const rebuild = () => {
@@ -87,6 +89,7 @@ export function createMockDataSource(opts: MockOptions): MockDataSource {
         { def: t, rows: structuredClone(t.rows), serial: maxSerial(t, t.rows, 0) },
       ]),
     );
+    if (epoch !== null) revision++;
     seq = 0;
     epoch = log.epoch();
   };
@@ -115,6 +118,7 @@ export function createMockDataSource(opts: MockOptions): MockDataSource {
     for (const e of log.readSince(seq)) {
       apply(e);
       seq = e.seq;
+      revision++;
     }
   };
 
@@ -142,7 +146,7 @@ export function createMockDataSource(opts: MockOptions): MockDataSource {
       const json = JSON.stringify(result);
       if (json === sub.last) return; // pushes happen when the result changes, not on every commit
       sub.last = json;
-      const page: Page = { rows: structuredClone(result.rows), total: result.total, revision: seq };
+      const page: Page = { rows: structuredClone(result.rows), total: result.total, revision };
       deliver(sub, () => sub.onPage(page));
     } catch (e) {
       if (sub.last === "error") return;
@@ -188,6 +192,11 @@ export function createMockDataSource(opts: MockOptions): MockDataSource {
       );
     }
   };
+
+  const keyOf = (t: LiveTable, row: Row): string => JSON.stringify(t.def.info.primaryKey.map((k) => row[k] ?? null));
+
+  const taken = (t: LiveTable, key: string): StudioDataSourceError =>
+    new StudioDataSourceError("unique_violation", `"${tableId(t.def.info)}" already has a row with key ${key}`);
 
   const defaultValue = (d: MockDefault, kind: ColumnKind, serial: { next: number }): CellValue => {
     if (typeof d === "object") return structuredClone(d.value);
@@ -278,6 +287,11 @@ export function createMockDataSource(opts: MockOptions): MockDataSource {
         for (const c of changes) {
           checkKey(t, c.key);
           checkValues(t, c.values);
+          if (!t.def.info.primaryKey.some((k) => Object.hasOwn(c.values, k))) continue;
+          for (const row of t.rows.filter((r) => matchesKey(r, c.key))) {
+            const k = keyOf(t, { ...row, ...c.values });
+            if (t.rows.some((other) => other !== row && keyOf(t, other) === k)) throw taken(t, k);
+          }
         }
         return changes.length === 0 ? null : { kind: "update", table: refOf(ref), changes: structuredClone(changes) };
       }, "studio");
@@ -289,6 +303,12 @@ export function createMockDataSource(opts: MockOptions): MockDataSource {
         const t = writable(ref);
         const serial = { next: t.serial };
         const full = rows.map((r) => materialize(t, r, serial));
+        const seen = new Set(t.rows.map((r) => keyOf(t, r)));
+        for (const r of full) {
+          const k = keyOf(t, r);
+          if (seen.has(k)) throw taken(t, k);
+          seen.add(k);
+        }
         keys = full.map((r) => Object.fromEntries(t.def.info.primaryKey.map((k) => [k, r[k] ?? null])));
         return full.length === 0 ? null : { kind: "insert", table: refOf(ref), rows: full };
       }, "studio");

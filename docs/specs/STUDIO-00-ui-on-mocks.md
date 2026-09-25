@@ -106,6 +106,8 @@ export interface StudioDataSource {
   `code` (`read_only`, `unknown_table`, `unknown_column`, `not_null`, `invalid_value`). Rows are ordered by `sort` and
   then by the primary key; `subscribePage` never calls back synchronously nor after unsubscribing. Reverse relations
   are derived in the client from `references`: no contract change.
+- 25 Sep 2026 (S1 final review): `StudioErrorCode` gains `unique_violation` (a primary key already taken, on insert or
+  on update — Postgres's 23505), with a conformance test. A page's `revision` only grows, across a mock reset too.
 
 **The mock** (`createMockDataSource(seed)`): in-memory tables seeded with a realistic dataset (users, posts,
 comments, an enum, a json column, a view, a table without a primary key, a few thousand rows); a

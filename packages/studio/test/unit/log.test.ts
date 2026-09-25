@@ -128,6 +128,28 @@ describe("browser log", () => {
     b.close();
   });
 
+  test("a commit that appends nothing still announces what it caught up on", async () => {
+    // Separate channels: A never hears B, so only its own commit can bring B's entry in, and A must say so.
+    const name = unique();
+    const idb = new IDBFactory();
+    const a = await createBrowserLog(name, { indexedDB: idb, openChannel: (n) => new BroadcastChannel(`${n}:a`) });
+    const b = await createBrowserLog(name, { indexedDB: idb, openChannel: (n) => new BroadcastChannel(`${n}:b`) });
+    const heard = heardBy(a);
+    await b.commit(() => entry("from b"));
+    expect(await a.commit(() => null)).toBeNull();
+    expect(labels(a)).toEqual(["from b"]);
+    expect(await heard(1)).toBe(1);
+    await b.commit(() => entry("again"));
+    await expect(
+      a.commit(() => {
+        throw new Error("refused");
+      }),
+    ).rejects.toThrow("refused");
+    expect(await heard(2)).toBe(2);
+    a.close();
+    b.close();
+  });
+
   test("a tab opened later replays the stored log", async () => {
     const name = unique();
     const idb = new IDBFactory();
