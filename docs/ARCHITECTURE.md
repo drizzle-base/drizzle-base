@@ -68,8 +68,8 @@ the same copy. Widen the range only after the suite has run against the new mino
 | `readset` | references, catalog, table-level read-set, `touches()` | sql |
 | `runtime` | `query()`/`mutation()`, `ctx.db`, transactions, runs in an exported snapshot; its pool is created with `prepare: false` | sql, readset |
 | `subscriptions` | index, registration, flush cycle, cache (01a-3) | sql, capture, readset, runtime |
-| `server` | WebSocket, boot (01a-4) | the server modules + protocol |
-| `protocol` | wire messages (01a-4) | — |
+| `server` | the WebSocket handler (`createHandler`), the API registry (`defineApi`), error redaction, `startDrizzleBase` (boot + capture restart) (01a-4a) | the server modules + protocol |
+| `protocol` | wire frames, the value codec (Date/bigint/bytes), client-frame validation; no Node APIs (01a-4a) | — |
 | `client` | client (01a-4) | protocol |
 | `react` | hooks (01a-4) | protocol, client |
 | `entry` | the files `exports` points at; re-exports only | every module |

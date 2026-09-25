@@ -223,6 +223,27 @@ waiters pending, and a statement name that did not hash the PREPARE signature. *
 plpgsql run by a query can DEALLOCATE the catalog statement (the run then fails closed) or PREPARE one under its name
 that outlives the run; no test pins that `ready` is set only after PREPARE succeeds (a wrong order fails closed).
 
+### DZB-01a-4a review (the wire protocol and the WebSocket server; plan reviewed, final reviewer 25 Sep 2026, verdict "fix first" → fixed)
+
+The plan review (1 Critical, 11 Important, all accepted) moved one change into the engine: a subscriber's first
+value that is older than commits the engine already applied (a fresh open whose replay dirtied it, a joiner on a
+dirty entry) is PROVISIONAL, and that subscriber is owed one event after the entry's next re-run, changed or not; the
+server holds it until then, so a client never shows data older than its own resolved mutation. The first value
+always goes out at once otherwise (a joiner's carries the entry's last cycle id). A mutation's reply names a cycle;
+the connection is sent a `txn` at or after it, empty when nothing it watches changed, compared with ≥ (a failed cycle
+is retried under a new id). Final review, each fixed with a test red before and red again under its sabotage: a
+reset during the named cycle stranded a connection with no subscription (the engine now has `onReset`, and the
+server resets every connection); a cycle whose barrier was registered after `close()` waited the full 10 s barrier
+timeout; `stop()` during a capture restart could leave a capture running (the restart logic is now a
+`CaptureSupervisor` with injected dependencies, tested deterministically: stop mid-restart, a capture dying while the
+restart finishes, errors from an older capture); the integration harness consumed frames in arrival order and was
+red in 4 of 5 runs (now 3 consecutive full runs green, same count); the server-wide call limit, the log redaction
+and the explicit origin list gained tests; the encoder refuses an own `__proto__` key; `toWireError` never throws; a
+mutation whose socket closed while it waited for a slot is not run. **Deferred:** a message rate limit (a 1 MiB
+bigint costs ~52 ms of CPU); encoding a shared entry once per subscriber per cycle (hot path: bench first); the
+capture's WAL-advance barrier is wired but untested; the library logger is the capture's (`log`), with no
+`onError` override yet; `reset()` still does not reject barriers in flight (the 01a-3 M3 item).
+
 ## 0. What and why
 
 drizzlebase gives an app written with **plain drizzle-orm** (schema in real columns, migrations by drizzle-kit,

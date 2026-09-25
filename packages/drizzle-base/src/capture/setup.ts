@@ -137,3 +137,24 @@ export async function dropCapture(sql: SQL, n: CaptureNames): Promise<void> {
   }
   await sql.unsafe(`drop publication if exists ${q(n.publication)}`);
 }
+
+// After a capture failure: a NEW slot, starting at the current WAL position, with the publication and everything
+// else left as the boot validated them. Commits between the old slot's position and now are not replayed — the
+// caller resets every subscription first and resumes only once the new slot exists, so no snapshot predates it
+// (spec P-M6). A transaction whose handling failed is not redelivered forever. A slot that stays active (its
+// consumer has not let go) is an error, never a silent "kept the old one".
+export async function recreateSlot(sql: SQL, slot: string, waitMs = 5_000): Promise<void> {
+  if (!NAME.test(slot)) throw new Error(`invalid slot name ${JSON.stringify(slot)}`);
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const [s] = await sql`select active from pg_replication_slots where slot_name = ${slot}`;
+    if (!s) break;
+    if (!s.active) {
+      await sql`select pg_drop_replication_slot(${slot})`;
+      break;
+    }
+    if (Date.now() > deadline) throw new Error(`replication slot ${slot} is still active: cannot recreate it`);
+    await Bun.sleep(100);
+  }
+  await sql`select pg_create_logical_replication_slot(${slot}, 'pgoutput')`;
+}
