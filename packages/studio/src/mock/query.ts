@@ -7,6 +7,7 @@ import {
   type Row,
   StudioDataSourceError,
 } from "../contract";
+import { instantOf, parsePgTime } from "../lib/pgtime";
 
 export interface QueryTable {
   columns: ColumnInfo[];
@@ -30,6 +31,14 @@ export function compareNonNull(kind: ColumnKind, a: CellValue, b: CellValue): nu
     }
     case "boolean":
       return a === b ? 0 : a ? 1 : -1;
+    case "date":
+    case "timestamp":
+    case "timestamptz": {
+      const x = parsePgTime(kind, textOf(a));
+      const y = parsePgTime(kind, textOf(b));
+      if (x && y) return Math.sign(instantOf(x) - instantOf(y));
+      return textOf(a) < textOf(b) ? -1 : textOf(a) > textOf(b) ? 1 : 0;
+    }
     default: {
       const x = textOf(a);
       const y = textOf(b);

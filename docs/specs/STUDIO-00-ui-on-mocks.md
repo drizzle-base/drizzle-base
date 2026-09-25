@@ -115,6 +115,10 @@ export interface StudioDataSource {
   a failing change is dropped while the others land). An update may carry `expected`, the original values of the
   columns it changes; a mismatch or a vanished row is refused with code `conflict`, and the error carries the row's
   `key`. Optimistic concurrency, because a live studio shows other people's writes arriving.
+- 25 Sep 2026 (S3b): date, timestamp and timestamptz values are read back as the data source stores them —
+  timestamptz in UTC (`+00`, the data source runs with TimeZone=UTC), fractions without trailing zeros — whatever
+  offset or form they were written in; comparisons are by instant. Text that is not a value of the column's kind
+  is `invalid_value`. The conformance suite gains `conformance.events`.
 
 **The mock** (`createMockDataSource(seed)`): in-memory tables seeded with a realistic dataset (users, posts,
 comments, an enum, a json column, a view, a table without a primary key, a few thousand rows); a

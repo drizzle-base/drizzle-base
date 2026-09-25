@@ -83,6 +83,17 @@ export function discardRow(draft: TableDraft, rowId: string): TableDraft {
   return { ...draft, updates };
 }
 
+export function revertCell(draft: TableDraft, rowId: string, column: string): TableDraft {
+  const row = draft.updates[rowId];
+  if (!row?.cells[column]) return draft;
+  const cells = { ...row.cells };
+  delete cells[column];
+  const updates = { ...draft.updates };
+  if (Object.keys(cells).length === 0) delete updates[rowId];
+  else updates[rowId] = { ...row, cells };
+  return { ...draft, updates };
+}
+
 export function changeCount(draft: TableDraft): number {
   return Object.values(draft.updates).reduce((n, r) => n + Object.keys(r.cells).length, 0) + draft.inserts.length;
 }

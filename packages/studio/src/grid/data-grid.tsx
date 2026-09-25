@@ -1,6 +1,6 @@
 import { type ColumnDef, tableFeatures, useTable } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { X } from "lucide-react";
+import { Maximize2, X } from "lucide-react";
 import { type KeyboardEvent, useMemo, useRef, useState } from "react";
 import type { CellValue, Page, Row, RowKey, Sort, TableInfo } from "../contract";
 import type { TableDraft } from "../edit/draft";
@@ -13,7 +13,7 @@ import { GridCell } from "./grid-cell";
 import { HeaderCell } from "./header-cell";
 
 const ROW_HEIGHT = 32;
-const LEAD_WIDTH = 36;
+const LEAD_WIDTH = 56;
 const features = tableFeatures({});
 
 export interface GridEditing {
@@ -26,6 +26,8 @@ export interface GridEditing {
   onEditExisting(rowId: string, key: RowKey, column: string, value: CellValue, original: CellValue): void;
   onEditNew(id: string, column: string, value: CellValue | undefined): void;
   onRemoveNew(id: string): void;
+  onExpandRow(rowId: string): void;
+  onFocusRow(rowId: string): void;
 }
 
 export interface DataGridProps {
@@ -107,6 +109,7 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
     const d = byId.get(ref.rowId);
     setSelected(ref);
     setEditingCell({ ...ref, expanded: opensExpanded(col), original: d?.row[ref.column] ?? null });
+    editing.onFocusRow(ref.rowId);
   };
   const commit = (ref: CellRef, value: CellValue | undefined, move?: "next") => {
     const d = byId.get(ref.rowId);
@@ -210,7 +213,7 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
                   role="gridcell"
                   tabIndex={-1}
                   aria-colindex={1}
-                  className="flex shrink-0 items-center justify-center border-r"
+                  className="flex shrink-0 items-center justify-center gap-1.5 border-r"
                   style={{ width: LEAD_WIDTH }}
                 >
                   {d.isNew ? (
@@ -225,6 +228,15 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
                       onChange={() => editing.onToggleRow(d.id)}
                     />
                   ) : null}
+                  <button
+                    type="button"
+                    aria-label="Expand row"
+                    title="Expand row"
+                    onClick={() => editing.onExpandRow(d.id)}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <Maximize2 className="size-3.5" />
+                  </button>
                 </div>
               )}
               {columns.map((laid, i) => {
@@ -248,7 +260,10 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
                     changed={isChanged}
                     selected={selected?.rowId === d.id && selected.column === name}
                     editing={editingCell?.rowId === d.id && editingCell.column === name && !editingCell.expanded}
-                    onSelect={() => setSelected(ref)}
+                    onSelect={() => {
+                      setSelected(ref);
+                      editing?.onFocusRow(ref.rowId);
+                    }}
                     onStartEdit={() => startEditing(ref)}
                     onCommit={(v, move) => commit(ref, v, move)}
                     onCancel={() => setEditingCell(null)}

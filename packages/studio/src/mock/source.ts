@@ -13,6 +13,7 @@ import {
   type TableRef,
   tableId,
 } from "../contract";
+import { canonicalPgTime, isTimeKind } from "../lib/pgtime";
 import type { MockDataset, MockDefault, MockTable } from "./dataset";
 import { mulberry32, uuidv7 } from "./ids";
 import type { LogEntry, MockLog, Op } from "./log";
@@ -184,12 +185,22 @@ export function createMockDataSource(opts: MockOptions): MockDataSource {
     return t;
   };
 
-  const checkValues = (t: LiveTable, values: Row) => {
+  /** Validates values (columns, NOT NULL, date/time text) and returns them as Postgres would store them. */
+  const normalize = (t: LiveTable, values: Row): Row => {
+    const out: Row = {};
     for (const [name, v] of Object.entries(values)) {
       const c = t.def.info.columns.find((x) => x.name === name);
       if (!c) throw new StudioDataSourceError("unknown_column", `unknown column "${name}"`);
       if (v === null && !c.nullable) throw new StudioDataSourceError("not_null", `"${name}" is NOT NULL`);
+      if (v !== null && v !== undefined && isTimeKind(c.kind)) {
+        const text = typeof v === "string" ? canonicalPgTime(c.kind, v) : null;
+        if (text === null) {
+          throw new StudioDataSourceError("invalid_value", `"${name}": ${JSON.stringify(v)} is not a ${c.pgType}`);
+        }
+        out[name] = text;
+      } else out[name] = v;
     }
+    return out;
   };
 
   const checkKey = (t: LiveTable, key: RowKey) => {
@@ -211,26 +222,32 @@ export function createMockDataSource(opts: MockOptions): MockDataSource {
   const pkOf = (t: LiveTable, row: Row): RowKey =>
     Object.fromEntries(t.def.info.primaryKey.map((k) => [k, row[k] ?? null]));
 
-  /** Validates an update against the caught-up table: columns, NOT NULL, a key that stays unique, `expected`. */
-  const checkUpdate = (t: LiveTable, c: RowUpdate) => {
+  /**
+   * Validates an update against the caught-up table (columns, NOT NULL, a key that stays unique, `expected`) and
+   * returns it with its values as they are stored.
+   */
+  const normalizeUpdate = (t: LiveTable, c: RowUpdate): RowUpdate => {
     checkKey(t, c.key);
-    checkValues(t, c.values);
+    const values = normalize(t, c.values);
+    const expected = c.expected ? normalize(t, c.expected) : undefined;
     const rows = t.rows.filter((r) => matchesKey(r, c.key));
-    if (c.expected) {
+    if (expected) {
       const label = JSON.stringify(c.key);
       const row = rows[0];
       if (!row) throw new StudioDataSourceError("conflict", `row ${label} is gone: deleted elsewhere`, c.key);
-      for (const [column, v] of Object.entries(c.expected)) {
+      for (const [column, v] of Object.entries(expected)) {
         if (!same(row[column], v)) {
           throw new StudioDataSourceError("conflict", `"${column}" of row ${label} was changed elsewhere`, c.key);
         }
       }
     }
-    if (!t.def.info.primaryKey.some((k) => Object.hasOwn(c.values, k))) return;
-    for (const row of rows) {
-      const k = keyOf(t, { ...row, ...c.values });
-      if (t.rows.some((other) => other !== row && keyOf(t, other) === k)) throw taken(t, k);
+    if (t.def.info.primaryKey.some((k) => Object.hasOwn(values, k))) {
+      for (const row of rows) {
+        const k = keyOf(t, { ...row, ...values });
+        if (t.rows.some((other) => other !== row && keyOf(t, other) === k)) throw taken(t, k);
+      }
     }
+    return { key: c.key, values, ...(expected ? { expected } : {}) };
   };
 
   /** Materialises inserts (defaults, NOT NULL) and refuses a key that is taken, by the table or the batch. */
@@ -261,11 +278,11 @@ export function createMockDataSource(opts: MockOptions): MockDataSource {
   };
 
   const materialize = (t: LiveTable, input: Row, serial: { next: number }): Row => {
-    checkValues(t, input);
+    const given = normalize(t, input);
     const row: Row = {};
     for (const c of t.def.info.columns) {
-      if (Object.hasOwn(input, c.name)) {
-        row[c.name] = input[c.name] ?? null;
+      if (Object.hasOwn(given, c.name)) {
+        row[c.name] = given[c.name] ?? null;
         continue;
       }
       const d = t.def.defaults[c.name];
@@ -332,8 +349,14 @@ export function createMockDataSource(opts: MockOptions): MockDataSource {
     async updateRows(ref, changes) {
       await commit(() => {
         const t = writable(ref);
-        for (const c of changes) checkUpdate(t, c);
-        return changes.length === 0 ? null : { kind: "update", table: refOf(ref), changes: structuredClone(changes) };
+        const ok = changes.map((c) => normalizeUpdate(t, c));
+        return ok.length === 0
+          ? null
+          : {
+              kind: "update",
+              table: refOf(ref),
+              changes: ok.map(({ key, values }) => structuredClone({ key, values })),
+            };
       }, "studio");
     },
 
@@ -352,11 +375,11 @@ export function createMockDataSource(opts: MockOptions): MockDataSource {
       let inserted: RowKey[] = [];
       await commit(() => {
         const t = writable(ref);
-        for (const u of edits.updates) checkUpdate(t, u);
+        const updates = edits.updates.map((u) => normalizeUpdate(t, u));
         const rows = materializeAll(t, edits.inserts);
         inserted = rows.map((r) => pkOf(t, r));
-        if (rows.length === 0 && edits.updates.length === 0) return null;
-        const changes = edits.updates.map(({ key, values }) => ({
+        if (rows.length === 0 && updates.length === 0) return null;
+        const changes = updates.map(({ key, values }) => ({
           key: structuredClone(key),
           values: structuredClone(values),
         }));
