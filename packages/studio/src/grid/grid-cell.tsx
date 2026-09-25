@@ -18,6 +18,7 @@ export interface GridCellProps {
   onStartEdit(): void;
   onCommit(value: CellValue, move?: "next"): void;
   onCancel(): void;
+  onExpand(): void;
 }
 
 export function GridCell(p: GridCellProps) {
@@ -47,7 +48,13 @@ export function GridCell(p: GridCellProps) {
       style={{ width: p.width }}
     >
       {p.editing ? (
-        <CellEditor column={p.column} value={p.value} onCommit={p.onCommit} onCancel={p.onCancel} />
+        <CellEditor
+          column={p.column}
+          value={p.value}
+          onCommit={p.onCommit}
+          onCancel={p.onCancel}
+          onExpand={p.onExpand}
+        />
       ) : (
         <span className="truncate">{text}</span>
       )}

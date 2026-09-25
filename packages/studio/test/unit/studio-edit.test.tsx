@@ -7,9 +7,9 @@ const USERS = { schema: "public", name: "users" };
 const seed = demoDataset(1).tables[0]?.rows ?? [];
 const idOf = (n: number) => seed[n - 1]?.["id"] ?? null;
 
-function setup(onDirtyChange?: (dirty: boolean) => void) {
+function setup(onDirtyChange?: (dirty: boolean) => void, latencyMs = 0) {
   const log = createMemoryLog();
-  const ds = createMockDataSource({ dataset: demoDataset(1), log });
+  const ds = createMockDataSource({ dataset: demoDataset(1), log, latencyMs });
   const other = createMockDataSource({ dataset: demoDataset(1), log });
   render(
     <Studio dataSource={ds} defaultView={{ ...EMPTY_VIEW, table: "public.users" }} onDirtyChange={onDirtyChange} />,
@@ -47,6 +47,44 @@ describe("editing in the studio", () => {
     await settle();
     expect(nameIn(1)).toBe("Renamed");
     expect(screen.queryByRole("region", { name: "Unsaved changes" })).toBeNull();
+  });
+
+  test("an edit made while a save is in flight is kept, not swept away with the save", async () => {
+    const { nameIn } = setup(undefined, 60);
+    await screen.findByText("User 1");
+    await edit("User 1", "A");
+    fireEvent.click(bar().getByRole("button", { name: "Save changes" }));
+    expect(bar().getByRole("button", { name: "Saving…" })).toBeTruthy();
+    await edit("User 2", "B");
+    await act(() => new Promise((r) => setTimeout(r, 250)));
+    expect(nameIn(1)).toBe("A");
+    expect(bar().getByText("1 unsaved change")).toBeTruthy();
+    expect(cell("B").getAttribute("data-pending")).toBe("true");
+  });
+
+  test("opening a NULL cell and leaving it changes nothing", async () => {
+    setup();
+    await screen.findByText("User 1");
+    const row7 = cell("user7@example.com").closest("[role=row]") as HTMLElement;
+    const name7 = within(row7).getAllByRole("gridcell")[3] as HTMLElement;
+    expect(name7.textContent).toBe("NULL");
+    fireEvent.doubleClick(name7);
+    fireEvent.keyDown(await screen.findByRole("textbox", { name: "Edit name" }), { key: "Enter" });
+    await settle();
+    expect(screen.queryByRole("region", { name: "Unsaved changes" })).toBeNull();
+    expect(name7.textContent).toBe("NULL");
+  });
+
+  test("any cell can be set to NULL from the full editor", async () => {
+    setup();
+    await screen.findByText("User 1");
+    fireEvent.doubleClick(cell("User 1"));
+    fireEvent.click(await screen.findByRole("button", { name: "Open the full editor" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Set NULL" }));
+    const row1 = cell("user1@example.com").closest("[role=row]") as HTMLElement;
+    const name1 = within(row1).getAllByRole("gridcell")[3] as HTMLElement;
+    expect(name1.textContent).toBe("NULL");
+    expect(name1.getAttribute("data-pending")).toBe("true");
   });
 
   test("Discard puts every value back", async () => {
@@ -92,6 +130,21 @@ describe("editing in the studio", () => {
     await act(async () => fireEvent.click(bar().getByRole("button", { name: "Save changes" })));
     await settle();
     expect(nameIn(1)).toBe("Mine");
+  });
+
+  test("a change elsewhere while the editor is open keeps what I typed and becomes a conflict", async () => {
+    const { other } = setup();
+    await screen.findByText("User 1");
+    fireEvent.doubleClick(cell("User 1"));
+    const input = (await screen.findByRole("textbox", { name: "Edit name" })) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Mine" } });
+    await act(() => other.updateRows(USERS, [{ key: { id: idOf(1) }, values: { name: "Theirs" } }]));
+    await settle();
+    const still = screen.getByRole("textbox", { name: "Edit name" }) as HTMLInputElement;
+    expect(still.value).toBe("Mine");
+    fireEvent.keyDown(still, { key: "Enter" });
+    expect(cell("Mine").getAttribute("data-conflict")).toBe("true");
+    expect(bar().getByRole("button", { name: "Save changes" }).hasAttribute("disabled")).toBe(true);
   });
 
   test("use theirs drops the edit", async () => {

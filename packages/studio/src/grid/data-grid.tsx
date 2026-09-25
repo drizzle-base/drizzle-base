@@ -86,7 +86,9 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
     overscan: 12,
   });
   const [selected, setSelected] = useState<CellRef | null>(null);
-  const [editingCell, setEditingCell] = useState<(CellRef & { expanded: boolean }) | null>(null);
+  // `original` is the row's value when editing began: a push while the editor is open must not become the
+  // expected value, or a save would overwrite the other person's change instead of reporting a conflict.
+  const [editingCell, setEditingCell] = useState<(CellRef & { expanded: boolean; original: CellValue }) | null>(null);
 
   const lead = editing ? LEAD_WIDTH : 0;
   const width = lead + columns.reduce((w, c) => w + c.width, 0);
@@ -102,15 +104,19 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
   const startEditing = (ref: CellRef) => {
     const col = columns.find((c) => c.column.name === ref.column)?.column;
     if (!editing || !col) return;
+    const d = byId.get(ref.rowId);
     setSelected(ref);
-    setEditingCell({ ...ref, expanded: opensExpanded(col) });
+    setEditingCell({ ...ref, expanded: opensExpanded(col), original: d?.row[ref.column] ?? null });
   };
   const commit = (ref: CellRef, value: CellValue | undefined, move?: "next") => {
     const d = byId.get(ref.rowId);
     if (!editing || !d) return;
+    const original =
+      editingCell?.rowId === ref.rowId && editingCell.column === ref.column
+        ? editingCell.original
+        : (d.row[ref.column] ?? null);
     if (d.isNew) editing.onEditNew(d.id, ref.column, value);
-    else if (d.key && value !== undefined)
-      editing.onEditExisting(d.id, d.key, ref.column, value, d.row[ref.column] ?? null);
+    else if (d.key && value !== undefined) editing.onEditExisting(d.id, d.key, ref.column, value, original);
     setEditingCell(null);
     if (move === "next") {
       const next = columns[columns.findIndex((c) => c.column.name === ref.column) + 1];
@@ -226,10 +232,12 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
                 const ref = { rowId: d.id, column: name };
                 const k = cellKey(d.id, name);
                 const isChanged = changed.has(k);
+                const isEditing = editingCell?.rowId === d.id && editingCell.column === name;
                 return (
                   <GridCell
-                    // A changed cell remounts on each revision so its flash animation restarts.
-                    key={isChanged ? `${k}:${page.revision}` : k}
+                    // A changed cell remounts on each revision so its flash restarts, unless it is being edited:
+                    // remounting would throw away what the person is typing.
+                    key={isChanged && !isEditing ? `${k}:${page.revision}` : k}
                     index={i + (editing ? 2 : 1)}
                     column={laid.column}
                     width={laid.width}
@@ -244,6 +252,7 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
                     onStartEdit={() => startEditing(ref)}
                     onCommit={(v, move) => commit(ref, v, move)}
                     onCancel={() => setEditingCell(null)}
+                    onExpand={() => setEditingCell((c) => (c ? { ...c, expanded: true } : c))}
                   />
                 );
               })}

@@ -12,6 +12,7 @@ import {
   setCell,
   setNewCell,
   toEdits,
+  withoutSaved,
 } from "../../src/edit/draft";
 import { col } from "../../src/mock";
 
@@ -82,4 +83,21 @@ test("missingRequired: NOT NULL without a default, unset or NULL, on new rows", 
   expect(missingRequired(n.draft, columns)).toEqual([{ id: n.id, column: "email" }]);
   expect(missingRequired(setNewCell(n.draft, n.id, "email", null), columns)).toHaveLength(1);
   expect(missingRequired(setNewCell(n.draft, n.id, "email", "e"), columns)).toEqual([]);
+});
+
+test("withoutSaved removes only what a save sent; edits made meanwhile stay", () => {
+  let sent = setCell(EMPTY_DRAFT, "r1", K, "name", "A", "a");
+  const n = addRow(sent);
+  sent = setNewCell(n.draft, n.id, "email", "e");
+  // While the save is in flight: another cell, a new value for the sent cell, another new row.
+  let now = setCell(sent, "r2", { id: 2 }, "name", "B", "b");
+  now = setCell(now, "r1", K, "age", 9, 1);
+  const m = addRow(now);
+  now = m.draft;
+  const left = withoutSaved(now, sent);
+  expect(Object.keys(left.updates).sort()).toEqual(["r1", "r2"]);
+  expect(left.updates["r1"]?.cells).toEqual({ age: { value: 9, original: 1 } });
+  expect(left.inserts.map((r) => r.id)).toEqual([m.id]);
+  const changedAgain = setCell(sent, "r1", K, "name", "A2", "A");
+  expect(withoutSaved(changedAgain, sent).updates["r1"]?.cells["name"]).toEqual({ value: "A2", original: "A" });
 });

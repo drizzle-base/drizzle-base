@@ -8,13 +8,18 @@ export interface CellEditorProps {
   value: CellValue | undefined;
   onCommit(value: CellValue, move?: "next"): void;
   onCancel(): void;
+  /** Switch to the full editor (NULL, DEFAULT, multi-line). */
+  onExpand?(): void;
 }
 
 const CONTROL = "h-full w-full min-w-0 bg-popover px-1 font-mono text-[13px] text-foreground outline-none";
 
 /** In-place editor. Enter commits, Tab commits and moves right, Esc cancels; an invalid value stays and says why. */
-export function CellEditor({ column, value, onCommit, onCancel }: CellEditorProps) {
+export function CellEditor({ column, value, onCommit, onCancel, onExpand }: CellEditorProps) {
   const [text, setText] = useState(value === undefined || value === null ? "" : textForEditing(column, value));
+  // Leaving the editor without changing the text is not an edit: NULL and DEFAULT show as "" and must stay what
+  // they are, not become an empty string.
+  const [opened] = useState(text);
   // A commit unmounts the editor, which blurs it: without this the blur would commit (or cancel) a second time.
   const done = useRef(false);
   const finish = (fn: () => void) => {
@@ -61,7 +66,8 @@ export function CellEditor({ column, value, onCommit, onCancel }: CellEditorProp
 
   const parsed = parseCellValue(column, text);
   const commit = (move?: "next") => {
-    if (parsed.ok) finish(() => onCommit(parsed.value ?? null, move));
+    if (text === opened) finish(onCancel);
+    else if (parsed.ok) finish(() => onCommit(parsed.value ?? null, move));
   };
   return (
     <>
@@ -87,6 +93,19 @@ export function CellEditor({ column, value, onCommit, onCancel }: CellEditorProp
         }}
         onBlur={() => (parsed.ok ? commit() : finish(onCancel))}
       />
+      {onExpand && (
+        <button
+          type="button"
+          aria-label="Open the full editor"
+          title="NULL, DEFAULT, multi-line"
+          // Keep the input focused: a blur here would commit before the full editor opens.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={onExpand}
+          className="absolute top-1/2 right-0.5 z-10 -translate-y-1/2 rounded bg-muted px-1 text-[11px] leading-4 text-muted-foreground hover:text-foreground"
+        >
+          ⋯
+        </button>
+      )}
       {!parsed.ok && (
         <span
           role="alert"

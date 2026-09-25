@@ -133,3 +133,23 @@ export function missingRequired(draft: TableDraft, columns: ColumnInfo[]): { id:
     required.filter((c) => (r.values[c.name] ?? null) === null).map((c) => ({ id: r.id, column: c.name })),
   );
 }
+
+/**
+ * What is left after a save of `sent` succeeded: everything added or changed while it was in flight. A cell edited
+ * again meanwhile stays, now expecting the value that was saved.
+ */
+export function withoutSaved(now: TableDraft, sent: TableDraft): TableDraft {
+  const updates: Record<string, PendingRow> = {};
+  for (const [rowId, row] of Object.entries(now.updates)) {
+    const saved = sent.updates[rowId]?.cells ?? {};
+    const cells: Record<string, CellEdit> = {};
+    for (const [column, e] of Object.entries(row.cells)) {
+      const s = saved[column];
+      if (!s) cells[column] = e;
+      else if (!same(e.value, s.value)) cells[column] = { value: e.value, original: s.value };
+    }
+    if (Object.keys(cells).length > 0) updates[rowId] = { ...row, cells };
+  }
+  const sentIds = new Set(sent.inserts.map((r) => r.id));
+  return { updates, inserts: now.inserts.filter((r) => !sentIds.has(r.id)) };
+}

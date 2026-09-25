@@ -15,6 +15,7 @@ import {
   setNewCell,
   type TableDraft,
   toEdits,
+  withoutSaved,
 } from "../edit/draft";
 import { EditBar, type SaveError } from "../edit/edit-bar";
 import { DataGrid, type GridEditing } from "../grid/data-grid";
@@ -155,9 +156,11 @@ export function Studio({
     const id = tableId(table);
     setSaving(true);
     setSaveError(null);
+    // The grid stays editable while a save is in flight: on success remove only what was sent.
+    const sent = draft;
     try {
-      await dataSource.applyEdits(table, toEdits(draft));
-      updateDraft(id, () => EMPTY_DRAFT);
+      await dataSource.applyEdits(table, toEdits(sent));
+      updateDraft(id, (now) => withoutSaved(now, sent));
     } catch (e) {
       const key = e instanceof StudioDataSourceError ? e.key : undefined;
       setSaveError({
