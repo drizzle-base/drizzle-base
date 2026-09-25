@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { functions } from "../src/runtime/functions";
-import { CommitOutcomeUnknownError, MutationAbortedError, MutationConflictError, Runtime } from "../src/runtime/runtime";
-import { testSql } from "./db";
-import { posts, schema, users, withApp } from "./fixtures/app";
+import { functions } from "../../../src/runtime";
+import { CommitOutcomeUnknownError, MutationAbortedError, MutationConflictError, Runtime } from "../../../src/runtime";
+import { testSql } from "../../../test/support/db";
+import { posts, schema, users, withApp } from "../../../test/support/app";
 
 const { query, mutation } = functions<typeof schema>();
 const U = "0190a000-0000-7000-8000-000000000001";

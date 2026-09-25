@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { PgoutputCapture } from "../src/capture/pgoutput";
-import { checkCapture, ensureCapture } from "../src/capture/setup";
-import { pgConfig, withCaptureSchema } from "./db";
+import { PgoutputCapture } from "../../../src/capture";
+import { checkCapture, ensureCapture } from "../../../src/capture";
+import { pgConfig, withCaptureSchema } from "../../../test/support/db";
 
 describe("ensureCapture + checkCapture", () => {
 	test("a fresh schema passes after ensureCapture", async () => {

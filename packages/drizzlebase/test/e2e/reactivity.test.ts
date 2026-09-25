@@ -1,14 +1,14 @@
 import { beforeAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { emitBarrier } from "../src/capture/barrier";
-import { PgoutputCapture } from "../src/capture/pgoutput";
-import type { CapturedTxn } from "../src/capture/types";
-import { touches } from "../src/readset/readset";
-import { functions } from "../src/runtime/functions";
-import { Runtime } from "../src/runtime/runtime";
-import { loadParser } from "../src/sql/parse";
-import { pgConfig } from "./db";
-import { posts, schema, users, withApp } from "./fixtures/app";
+import { emitBarrier } from "../../src/capture";
+import { PgoutputCapture } from "../../src/capture";
+import type { CapturedTxn } from "../../src/capture";
+import { touches } from "../../src/readset";
+import { functions } from "../../src/runtime";
+import { Runtime } from "../../src/runtime";
+import { loadParser } from "../../src/sql";
+import { pgConfig } from "../../test/support/db";
+import { posts, schema, users, withApp } from "../../test/support/app";
 
 beforeAll(loadParser);
 const { query, mutation } = functions<typeof schema>();

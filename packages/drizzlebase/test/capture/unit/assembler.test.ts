@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Pgoutput } from "pg-logical-replication";
-import { TxnAssembler } from "../src/capture/assembler";
-import { BARRIER_PREFIX, DDL_PREFIX, type StreamEvent } from "../src/capture/types";
+import { TxnAssembler } from "../../../src/capture";
+import { BARRIER_PREFIX, DDL_PREFIX, type StreamEvent } from "../../../src/capture";
 
 const rel = (name: string, replicaIdentity: Pgoutput.MessageRelation["replicaIdentity"] = "full", oid = 1): Pgoutput.MessageRelation => ({
 	tag: "relation", relationOid: oid, schema: "app", name, replicaIdentity, columns: [], keyColumns: ["id"],

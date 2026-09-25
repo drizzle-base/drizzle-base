@@ -4,10 +4,10 @@
 //   bun --preload ./test/env.ts load/drizzle_overhead.ts
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sql";
-import { functions } from "../src/runtime/functions";
-import { Runtime } from "../src/runtime/runtime";
-import { loadParser } from "../src/sql/parse";
-import { schema, users, withApp } from "../test/fixtures/app";
+import { functions } from "../../src/runtime";
+import { Runtime } from "../../src/runtime";
+import { loadParser } from "../../src/sql";
+import { schema, users, withApp } from "../../test/support/app";
 
 const N = Number(process.env.N ?? 3000);
 await loadParser();

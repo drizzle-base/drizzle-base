@@ -2,9 +2,9 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import type { SQL } from "bun";
 import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sql";
-import { CapturingClient } from "../src/runtime/client";
-import { ForbiddenStatementError, loadParser } from "../src/sql/parse";
-import { schema, users, withApp } from "./fixtures/app";
+import { CapturingClient } from "../../../src/runtime";
+import { ForbiddenStatementError, loadParser } from "../../../src/sql";
+import { schema, users, withApp } from "../../../test/support/app";
 
 beforeAll(loadParser);
 

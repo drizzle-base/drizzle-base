@@ -1,11 +1,11 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { SQL } from "bun";
-import type { CapturedTxn } from "../src/capture/types";
-import { Catalog } from "../src/readset/catalog";
-import { buildReadSet, type ReadSet, touches } from "../src/readset/readset";
-import { collectRefs } from "../src/readset/refs";
-import { loadParser, parseStatement } from "../src/sql/parse";
-import { withApp } from "./fixtures/app";
+import type { CapturedTxn } from "../../../src/capture";
+import { Catalog } from "../../../src/readset";
+import { buildReadSet, type ReadSet, touches } from "../../../src/readset";
+import { collectRefs } from "../../../src/readset";
+import { loadParser, parseStatement } from "../../../src/sql";
+import { withApp } from "../../../test/support/app";
 
 beforeAll(loadParser);
 // Resolution runs on the given connection with its search_path, as the runtime does inside a function.
