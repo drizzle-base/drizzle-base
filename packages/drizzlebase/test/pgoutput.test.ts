@@ -255,4 +255,21 @@ describe("PgoutputCapture", () => {
 			}
 		});
 	}, 30_000);
+	test("a bulk update past the row cap arrives as whole-table with bounded images", async () => {
+		await withCaptureSchema(async (sql, n) => {
+			await sql.unsafe(`create table "${n.schema}".big(id int primary key, v int, pad text)`);
+			await sql.unsafe(`insert into "${n.schema}".big select g, 0, repeat('x', 500) from generate_series(1, 20000) g`);
+			const c = collector();
+			const cap = await started(sql, n, c, 1000);
+			try {
+				await sql.unsafe(`update "${n.schema}".big set v = v + 1`);
+				await c.sync(sql, "b7");
+				const t = c.txns().find((x) => x.wholeTables.has(`${n.schema}.big`));
+				expect(t).toBeDefined();
+				expect(t!.changes.length).toBeLessThanOrEqual(1000);
+			} finally {
+				await cap.stop();
+			}
+		});
+	});
 });

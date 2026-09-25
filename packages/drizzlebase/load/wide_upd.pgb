@@ -1,0 +1,2 @@
+\set id random(1, 20000)
+update rb_wide set views = views + 1 where id = :id;
