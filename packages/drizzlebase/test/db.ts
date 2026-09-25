@@ -29,8 +29,22 @@ export function uniqueName(prefix: string): string {
 }
 
 // A throwaway schema + publication + slot per test, dropped afterwards even when the test fails.
+// A test that times out is abandoned without running its finally: its slot would stay behind and retain WAL
+// forever. Test objects carry the owning pid in their name; anything whose pid is gone is swept.
+const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+async function sweepAbandoned(sql: SQL): Promise<void> {
+	const dead = (name: string) => { const pid = Number(name.split("_")[1]); return Number.isInteger(pid) && pid !== process.pid && !alive(pid); };
+	for (const r of await sql`select slot_name from pg_replication_slots where slot_name ~ '^slot_[0-9]+_' and not active`)
+		if (dead(r.slot_name)) await sql`select pg_drop_replication_slot(${r.slot_name})`;
+	for (const r of await sql`select pubname from pg_publication where pubname ~ '^pub_[0-9]+_'`)
+		if (dead(r.pubname)) await sql.unsafe(`drop publication if exists "${r.pubname}"`);
+	for (const r of await sql`select nspname from pg_namespace where nspname ~ '^s_[0-9]+_'`)
+		if (dead(r.nspname)) await sql.unsafe(`drop schema if exists "${r.nspname}" cascade`);
+}
+
 export async function withCaptureSchema(fn: (sql: SQL, n: CaptureNames) => Promise<void>): Promise<void> {
 	const sql = testSql();
+	await sweepAbandoned(sql);
 	const n: CaptureNames = { schema: uniqueName("s"), publication: uniqueName("pub"), slot: uniqueName("slot") };
 	await sql.unsafe(`create schema "${n.schema}"`);
 	try {
