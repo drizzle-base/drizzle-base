@@ -2,9 +2,18 @@
   "name": "drizzlebase-workspace",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "check": "biome check . && bun run --filter drizzlebase typecheck && bun run --filter drizzlebase test:unit",
     "test": "bun run --filter drizzlebase test",
     "typecheck": "bun run --filter drizzlebase typecheck"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14"
   }
 }

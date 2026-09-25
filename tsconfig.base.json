@@ -8,6 +8,9 @@
     "noImplicitOverride": true,
     "skipLibCheck": true,
     "types": ["bun-types"],
-    "noEmit": true
+    "noEmit": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true
   }
 }

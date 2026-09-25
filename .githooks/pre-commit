@@ -1,0 +1,4 @@
+#!/bin/bash
+# Lint + format check of the staged files only: fast enough to never be skipped. The full gate is `bun run check`.
+set -eu
+exec bunx biome check --staged --no-errors-on-unmatched --files-ignore-unknown=true

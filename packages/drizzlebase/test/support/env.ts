@@ -5,9 +5,9 @@ import { join } from "node:path";
 
 process.env.NODE_ENV = "test";
 const rootEnv = join(import.meta.dir, "..", "..", "..", "..", ".env");
-if (!process.env.POSTGRES_PASSWORD && existsSync(rootEnv)) {
-	for (const line of readFileSync(rootEnv, "utf8").split("\n")) {
-		const m = line.match(/^([A-Z_]+)=(.*)$/);
-		if (m?.[1] && m[2] !== undefined && !(m[1] in process.env)) process.env[m[1]] = m[2];
-	}
+if (!process.env["POSTGRES_PASSWORD"] && existsSync(rootEnv)) {
+  for (const line of readFileSync(rootEnv, "utf8").split("\n")) {
+    const m = line.match(/^([A-Z_]+)=(.*)$/);
+    if (m?.[1] && m[2] !== undefined && !(m[1] in process.env)) process.env[m[1]] = m[2];
+  }
 }
