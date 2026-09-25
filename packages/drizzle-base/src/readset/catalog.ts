@@ -4,6 +4,7 @@
 // review #2/#3). Memoised by (schemas, name as written): `schemas` is current_schemas(true), which also names the
 // session's temp schema. prefetch() resolves every name a run needs in ONE statement; the per-name loaders stay
 // as the reference it is tested against.
+import { createHash, randomBytes } from "node:crypto";
 import type { SQL } from "bun";
 import type { FunctionRef, OperatorRef, Refs, RelationRef } from "./refs";
 
@@ -84,6 +85,28 @@ select (select coalesce(json_agg(r), '[]') from rels r) as rels,
        (select coalesce(json_agg(f), '[]') from fns f) as fns,
        (select coalesce(json_agg(o), '[]') from ops o) as ops`;
 
+// The batch, PREPAREd once per connection: the pool never prepares (prepare: false), and re-planning this
+// statement on every run cost more than its round trips (1.0–1.5 ms of planning against 0.64 ms of execution,
+// measured). A catalog statement is safe to prepare: it reads system catalogs, whose shape never changes. The name
+// carries a hash of the text, so a changed batch never meets an old plan on a long-lived connection.
+export const CATALOG_STATEMENT = `dzb_catalog_${createHash("sha256").update(BATCH).digest("hex").slice(0, 12)}`;
+
+// Whether this connection already holds CATALOG_STATEMENT. The runtime reads it in the statement it sends first
+// (no extra round trip); prefetch sets it once it has prepared.
+export interface PreparedState {
+  ready: boolean;
+}
+
+// EXECUTE takes no bind parameters, so the payload travels as a literal. A dollar quote has no escapes, so it does
+// not depend on standard_conforming_strings; its tag is random and never one that occurs in the text, so the text
+// cannot close it early. The only way text enters the prepared path.
+export function dollarQuote(text: string): string {
+  for (;;) {
+    const tag = `$dzb_${randomBytes(6).toString("hex")}$`;
+    if (!text.includes(tag)) return `${tag}${text}${tag}`;
+  }
+}
+
 interface Pending<T> {
   resolve: (v: T) => void;
   reject: (e: unknown) => void;
@@ -134,7 +157,7 @@ export class Catalog {
   // Resolves, in one statement, every name the given statements use that is not memoised yet. Each missing key
   // gets a pending entry BEFORE the first await, so a concurrent caller sharing this Catalog (a cycle's lanes)
   // waits for this statement instead of issuing its own. A failure rejects them all (and forgets them).
-  async prefetch(refs: readonly Refs[], exec: SQL, searchPath: string): Promise<void> {
+  async prefetch(refs: readonly Refs[], exec: SQL, searchPath: string, prepared?: PreparedState): Promise<void> {
     const rels: (Pending<RelationInfo | null> & { name: string; only: boolean })[] = [];
     const fns: (Pending<FunctionInfo | null> & { name: string; schema: string | null })[] = [];
     const ops: (Pending<boolean | null> & { name: string; schema: string | null })[] = [];
@@ -161,7 +184,7 @@ export class Catalog {
     });
     let row: BatchRow;
     try {
-      row = await this.issue(exec, payload);
+      row = await this.issue(exec, payload, prepared);
     } catch (e) {
       for (const x of [...rels, ...fns, ...ops]) x.reject(e);
       throw e;
@@ -190,9 +213,21 @@ export class Catalog {
     }
   }
 
-  // The one statement of a prefetch; a method of its own so a test can count them.
-  protected async issue(exec: SQL, payload: string): Promise<BatchRow> {
-    const [row] = await exec.unsafe(BATCH, [payload, this.publication]);
+  // The one statement of a prefetch (plus a one-time PREPARE on the prepared path); a method of its own so a
+  // test can count them. Both go over the simple protocol: the extended one would read the PREPARE body's $1 as
+  // a protocol parameter.
+  protected async issue(exec: SQL, payload: string, prepared?: PreparedState): Promise<BatchRow> {
+    if (!prepared) {
+      const [row] = await exec.unsafe(BATCH, [payload, this.publication]);
+      return row as BatchRow;
+    }
+    if (!prepared.ready) {
+      await exec.unsafe(`prepare ${CATALOG_STATEMENT}(jsonb, text) as ${BATCH}`).simple();
+      prepared.ready = true;
+    }
+    const [row] = await exec
+      .unsafe(`execute ${CATALOG_STATEMENT}(${dollarQuote(payload)}, ${dollarQuote(this.publication)})`)
+      .simple();
     return row as BatchRow;
   }
 

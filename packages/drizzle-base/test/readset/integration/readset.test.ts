@@ -1,7 +1,15 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { SQL } from "bun";
 import type { CapturedTxn } from "../../../src/capture";
-import { buildReadSet, Catalog, collectRefs, type ReadSet, readSetOf, touches } from "../../../src/readset";
+import {
+  buildReadSet,
+  CATALOG_STATEMENT,
+  Catalog,
+  collectRefs,
+  type ReadSet,
+  readSetOf,
+  touches,
+} from "../../../src/readset";
 import { loadParser, parseStatement } from "../../../src/sql";
 import { withApp } from "../../../test/support/app";
 
@@ -172,6 +180,8 @@ describe("prefetch resolves exactly what the per-name loaders resolve", () => {
     create table dzb_app.puppies(age int) inherits (dzb_app.dogs);
     create table dzb_app."MixedCase"(id int primary key);
     create table dzb_app."a.b"(id int primary key);
+    create table dzb_app."a$q$b'c"(id int primary key);
+    create table dzb_app."$dzb_x$"(id int primary key);
     create sequence dzb_app.seq_x;
     create function dzb_app.lower(text) returns text language sql immutable as $$ select $1 $$;
     drop schema if exists dzb_ops cascade;
@@ -191,6 +201,7 @@ describe("prefetch resolves exactly what the per-name loaders resolve", () => {
     `select * from dzb_app.events, only dzb_app.dogs, dzb_app.puppies`,
     `select * from users, dzb_app.users, posts`,
     `select * from dzb_app."MixedCase", dzb_app."a.b", dzb_app.mixedcase`,
+    `select * from dzb_app."a$q$b'c", dzb_app."$dzb_x$"`,
     `select * from dzb_app.seq_x, dzb_app.adults, dzb_app.secrets, public.dzb_outside, dzb_app.nope`,
     `with posts as (select 1 as id) select * from posts, dzb_app.posts, dzb_outside`,
     `select lower(name), dzb_app.lower(name), pg_catalog.lower(name), now(), dzb_app.post_count(id) from dzb_app.users`,
@@ -200,55 +211,62 @@ describe("prefetch resolves exactly what the per-name loaders resolve", () => {
   ];
   const norm = (r: ReadSet) => ({ tables: [...r.tables].sort(), opaque: r.opaque, volatile: r.volatile });
 
-  for (const searchPath of ["public", "dzb_app, public", "dzb_ops, dzb_app, public"])
-    test(`on search_path ${searchPath}`, async () => {
-      await withApp(async (sql, n) => {
-        await sql.unsafe(EXTRA);
-        const conn = await sql.reserve();
-        try {
-          await conn.unsafe(`set search_path to ${searchPath}`);
-          const [{ sp }] = await conn.unsafe("select current_schemas(true)::text as sp");
-          let differed = 0;
-          for (const text of CORPUS) {
-            const stmt = parseStatement(text).stmt;
-            const batched = await readSetOf([{ stmt }], new Catalog(n.publication), conn, sp as string);
-            const single = await buildReadSet(collectRefs(stmt), new Catalog(n.publication), conn, sp as string);
-            expect({ text, ...norm(batched) }).toEqual({ text, ...norm(single) });
-            // Per name, not only per statement: a cycle's lanes share one Catalog, so a name's memoised info is
-            // reused by OTHER queries — an ancestor credited to the wrong name would vanish in this statement's
-            // union and still be missing for a query that reads that name alone.
-            const refs = collectRefs(stmt);
-            const pre = new Catalog(n.publication);
-            const ref = new Catalog(n.publication);
-            await pre.prefetch([refs], conn, sp as string);
-            for (const r of refs.relations)
-              expect({ text, r, info: await pre.relation(r, conn, sp as string) }).toEqual({
-                text,
-                r,
-                info: await ref.relation(r, conn, sp as string),
-              });
-            for (const f of refs.functions)
-              expect({ text, f, info: await pre.fn(f, conn, sp as string) }).toEqual({
-                text,
-                f,
-                info: await ref.fn(f, conn, sp as string),
-              });
-            for (const o of refs.operators)
-              expect({ text, o, info: await pre.operator(o, conn, sp as string) }).toEqual({
-                text,
-                o,
-                info: await ref.operator(o, conn, sp as string),
-              });
-            if (single.opaque.length || single.volatile.length) differed++;
+  // "planned": the batch is planned on every call; "prepared": the runtime's path, PREPAREd once per connection.
+  for (const mode of ["planned", "prepared"] as const)
+    for (const searchPath of ["public", "dzb_app, public", "dzb_ops, dzb_app, public"])
+      test(`${mode}, on search_path ${searchPath}`, async () => {
+        await withApp(async (sql, n) => {
+          await sql.unsafe(EXTRA);
+          const conn = await sql.reserve();
+          try {
+            await conn.unsafe(`set search_path to ${searchPath}`);
+            const [{ sp, ready }] = await conn.unsafe(
+              "select current_schemas(true)::text as sp, exists (select 1 from pg_prepared_statements where name = $1) as ready",
+              [CATALOG_STATEMENT],
+            );
+            const state = mode === "prepared" ? { ready: ready as boolean } : undefined;
+            let differed = 0;
+            for (const text of CORPUS) {
+              const stmt = parseStatement(text).stmt;
+              const batched = await readSetOf([{ stmt }], new Catalog(n.publication), conn, sp as string, state);
+              const single = await buildReadSet(collectRefs(stmt), new Catalog(n.publication), conn, sp as string);
+              expect({ text, ...norm(batched) }).toEqual({ text, ...norm(single) });
+              // Per name, not only per statement: a cycle's lanes share one Catalog, so a name's memoised info is
+              // reused by OTHER queries — an ancestor credited to the wrong name would vanish in this statement's
+              // union and still be missing for a query that reads that name alone.
+              const refs = collectRefs(stmt);
+              const pre = new Catalog(n.publication);
+              const ref = new Catalog(n.publication);
+              await pre.prefetch([refs], conn, sp as string, state);
+              for (const r of refs.relations)
+                expect({ text, r, info: await pre.relation(r, conn, sp as string) }).toEqual({
+                  text,
+                  r,
+                  info: await ref.relation(r, conn, sp as string),
+                });
+              for (const f of refs.functions)
+                expect({ text, f, info: await pre.fn(f, conn, sp as string) }).toEqual({
+                  text,
+                  f,
+                  info: await ref.fn(f, conn, sp as string),
+                });
+              for (const o of refs.operators)
+                expect({ text, o, info: await pre.operator(o, conn, sp as string) }).toEqual({
+                  text,
+                  o,
+                  info: await ref.operator(o, conn, sp as string),
+                });
+              if (single.opaque.length || single.volatile.length) differed++;
+            }
+            expect(differed).toBeGreaterThan(5); // the premise: the corpus exercises the widening paths
+            if (state) expect(state.ready).toBe(true); // the premise: the prepared path really ran
+          } finally {
+            await conn.unsafe("reset search_path");
+            conn.release();
+            await sql.unsafe("drop schema if exists dzb_ops cascade");
           }
-          expect(differed).toBeGreaterThan(5); // the premise: the corpus exercises the widening paths
-        } finally {
-          await conn.unsafe("reset search_path");
-          conn.release();
-          await sql.unsafe("drop schema if exists dzb_ops cascade");
-        }
+        });
       });
-    });
 
   test("one catalog statement for a whole run, none for a second run on the same Catalog, none for no names", async () => {
     await withApp(async (sql, n) => {
@@ -282,6 +300,16 @@ describe("prefetch resolves exactly what the per-name loaders resolve", () => {
         expect(issued).toBe(1);
         await run("select 1", new Catalog(n.publication));
         expect(issued).toBe(1);
+        // The prepared path: PREPARE + EXECUTE the first time on this connection, EXECUTE alone after that.
+        const state = { ready: false };
+        const prepared = (c: Catalog) =>
+          readSetOf([{ stmt: parseStatement(text).stmt }], c, counted as unknown as SQL, sp as string, state);
+        issued = 0;
+        await prepared(new Catalog(n.publication));
+        expect(issued).toBe(2);
+        expect(state.ready).toBe(true);
+        await prepared(new Catalog(n.publication));
+        expect(issued).toBe(3);
       } finally {
         conn.release();
       }

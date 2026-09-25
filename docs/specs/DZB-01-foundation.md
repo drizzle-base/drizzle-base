@@ -214,9 +214,9 @@ back in time, re-keying an entry that turns volatile, and a reset during COMMIT.
 successful COMMIT (one round trip per cycle); the pool needs `max >= connections + 1`; `reset()` does not reject
 pending barriers; no bound on a cycle's or a fresh query's time; an idle-in-transaction writer pins xmin and the
 buffer is replayed whole on every registration (index it by table, RB-B3); a duplicate barrier id arriving early
-overwrites `seen`. Performance, open for the owner: the per-run catalog costs +2/+5 ms per fresh run
-(`docs/BENCH.md`); cures are one catalog query per run, one `Catalog` per cycle across lanes, or a cross-run
-cache keyed by the DDL stream's generation (needs its own spec).
+overwrites `seen`. Performance: the per-run catalog cost was mostly PLANNING, not round trips; cured by DZB-PERF-CATALOG
+(one prepared catalog statement per run, one `Catalog` per cycle; `docs/BENCH.md`, −27 % / −50 %). A cross-run cache
+keyed by the DDL stream's generation stays open (needs its own spec).
 
 ## 0. What and why
 

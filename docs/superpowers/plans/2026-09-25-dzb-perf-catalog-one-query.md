@@ -137,3 +137,35 @@ Probes:
 Status: correctness is done and tested (equivalence per name and per statement, 12 sabotages red; one statement per
 run; one Catalog per cycle). The performance goal is not met. The next step is the owner's call (see the chat of
 25 Sep).
+
+## Extension E (owner's go-ahead, 25 Sep 2026): the batch prepared once per connection
+
+- **E1.** `Catalog.prefetch(refs, exec, schemas, prepared?: { ready: boolean })`.
+  - With a state object, the batch runs as `EXECUTE dzb_catalog_<hash of its text>(<payload>, <publication>)`,
+    after a one-time `PREPARE` on that connection when `ready` is false. The state becomes ready after the
+    `PREPARE`.
+  - Without a state object, the batch is planned each time, as now.
+  - Both `PREPARE` and `EXECUTE` go over the simple protocol. `EXECUTE` cannot take bind parameters, and an
+    extended-protocol `PREPARE` would read its body's `$1` as a protocol parameter.
+- **E2.** The payload and the publication name are embedded as dollar-quoted literals.
+  - The tag is `dzb_<random hex>`, regenerated until `$tag$` does not occur in the text, so the literal cannot be
+    closed early.
+  - It does not depend on `standard_conforming_strings`: dollar quotes have no escapes.
+  - This is SQL built by string, accepted by the owner. `dollarQuote()` is the only way in, and it is tested with
+    adversarial text, round-tripped through Postgres.
+- **E3.** The runtime learns whether the connection is ready from the first statement it already sends: `exists
+  (select 1 from pg_prepared_statements where name = $1)`, so no extra round trip. `runQuery` and every lane of
+  `runInSnapshot` pass the state object. A prepared statement survives a rollback (probed), and it lives as long
+  as the connection. The name carries a hash of the SQL, so a changed batch never reuses an old plan.
+- **Tests.**
+  - The equivalence corpus runs on the prepared path too, the first run preparing and later ones executing.
+  - The corpus adds tables named `a$q$b'c` and `$dzb_x$`.
+  - A fresh connection issues PREPARE plus EXECUTE, and after that EXECUTE only.
+  - Two `runQuery` calls on a one-connection pool both succeed, because a second PREPARE would fail with 42P05,
+    and the statement is listed in `pg_prepared_statements`.
+  - `dollarQuote` round-trips adversarial strings through Postgres.
+  - Sabotages:
+    - a fixed tag (the `$q$` table breaks);
+    - the runtime always reporting not ready (the second `runQuery` fails);
+    - `EXECUTE` of the wrong payload (the equivalence corpus fails).
+- **Lands only if** the A/B shows a gain over per-name lookups on both the builder and the relational query.

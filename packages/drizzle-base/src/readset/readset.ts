@@ -3,7 +3,7 @@
 // (volatile: never cached). Row-level precision comes in 01b/01c; this level must already never narrow.
 import type { SQL } from "bun";
 import type { Node } from "../sql";
-import type { Catalog } from "./catalog";
+import type { Catalog, PreparedState } from "./catalog";
 import { collectRefs, type Refs } from "./refs";
 
 export interface ReadSet {
@@ -88,10 +88,11 @@ export async function readSetOf(
   catalog: Catalog,
   exec: SQL,
   searchPath: string,
+  prepared?: PreparedState,
 ): Promise<ReadSet> {
   const all: ReadSet = { tables: new Set(), opaque: [], volatile: [] };
   const refs = stmts.map((s) => collectRefs(s.stmt));
-  await catalog.prefetch(refs, exec, searchPath); // one catalog statement for the whole run
+  await catalog.prefetch(refs, exec, searchPath, prepared); // one catalog statement for the whole run
   for (const r of refs) {
     const one = await buildReadSet(r, catalog, exec, searchPath);
     for (const t of one.tables) all.tables.add(t);
