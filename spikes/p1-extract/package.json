@@ -1,0 +1,17 @@
+{
+  "name": "p1-extract",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^7"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "drizzle-orm": "0.45.3",
+    "pgsql-ast-parser": "^12.0.2"
+  }
+}

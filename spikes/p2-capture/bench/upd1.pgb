@@ -1,0 +1,2 @@
+\set id random(1, 100000)
+update bench set v = v + 1 where id = :id;

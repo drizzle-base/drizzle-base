@@ -1,0 +1,55 @@
+round=1 variant=none wl=upd1 tps=15044.386093 lat_ms=0.532
+round=1 variant=none wl=ins1 tps=16881.579362 lat_ms=0.474
+round=1 variant=none wl=bulk tps=577.625516 lat_ms=6.925
+round=1 variant=row wl=upd1 tps=10526.667039 lat_ms=0.760
+round=1 variant=row wl=ins1 tps=19276.474254 lat_ms=0.415
+round=1 variant=row wl=bulk tps=138.855191 lat_ms=28.807
+round=1 variant=row outbox_rows=1013744 outbox_size=298 MB
+round=1 variant=stmt wl=upd1 tps=11207.289461 lat_ms=0.714
+round=1 variant=stmt wl=ins1 tps=10666.105053 lat_ms=0.750
+round=1 variant=stmt wl=bulk tps=180.226622 lat_ms=22.194
+round=1 variant=stmt outbox_rows=2360468 outbox_size=458 MB
+round=1 variant=returning wl=upd1 tps=18862.540298 lat_ms=0.424
+round=1 variant=returning wl=ins1 tps=19649.902421 lat_ms=0.407
+round=1 variant=returning wl=bulk tps=262.575353 lat_ms=15.234
+round=1 variant=logical wl=upd1 tps=20423.025394 lat_ms=0.392
+round=1 variant=logical wl=ins1 tps=24585.018889 lat_ms=0.325
+round=1 variant=logical wl=bulk tps=822.478935 lat_ms=4.863
+round=1 variant=logical drain_changes=5752548 drain_s=19
+round=2 variant=none wl=upd1 tps=21497.699336 lat_ms=0.372
+round=2 variant=none wl=ins1 tps=16884.325310 lat_ms=0.474
+round=2 variant=none wl=bulk tps=726.330765 lat_ms=5.507
+round=2 variant=row wl=upd1 tps=11036.853046 lat_ms=0.725
+round=2 variant=row wl=ins1 tps=12914.636416 lat_ms=0.619
+round=2 variant=row wl=bulk tps=117.367321 lat_ms=34.081
+round=2 variant=row outbox_rows=849760 outbox_size=253 MB
+round=2 variant=stmt wl=upd1 tps=14161.482980 lat_ms=0.565
+round=2 variant=stmt wl=ins1 tps=18626.841852 lat_ms=0.429
+round=2 variant=stmt wl=bulk tps=179.152747 lat_ms=22.327
+round=2 variant=stmt outbox_rows=2433673 outbox_size=471 MB
+round=2 variant=returning wl=upd1 tps=19007.079568 lat_ms=0.421
+round=2 variant=returning wl=ins1 tps=23149.776395 lat_ms=0.346
+round=2 variant=returning wl=bulk tps=341.692660 lat_ms=11.706
+round=2 variant=logical wl=upd1 tps=17220.234534 lat_ms=0.465
+round=2 variant=logical wl=ins1 tps=20414.452161 lat_ms=0.392
+round=2 variant=logical wl=bulk tps=696.315809 lat_ms=5.745
+round=2 variant=logical drain_changes=4863735 drain_s=17
+round=3 variant=none wl=upd1 tps=18690.206817 lat_ms=0.428
+round=3 variant=none wl=ins1 tps=20214.586483 lat_ms=0.396
+round=3 variant=none wl=bulk tps=784.265333 lat_ms=5.100
+round=3 variant=row wl=upd1 tps=10624.285611 lat_ms=0.753
+round=3 variant=row wl=ins1 tps=10406.255141 lat_ms=0.769
+round=3 variant=row wl=bulk tps=104.688270 lat_ms=38.209
+round=3 variant=row outbox_rows=755385 outbox_size=226 MB
+round=3 variant=stmt wl=upd1 tps=11239.186837 lat_ms=0.712
+round=3 variant=stmt wl=ins1 tps=13977.205209 lat_ms=0.572
+round=3 variant=stmt wl=bulk tps=133.495612 lat_ms=29.964
+round=3 variant=stmt outbox_rows=1824674 outbox_size=353 MB
+round=3 variant=returning wl=upd1 tps=14688.016454 lat_ms=0.545
+round=3 variant=returning wl=ins1 tps=19867.745090 lat_ms=0.403
+round=3 variant=returning wl=bulk tps=306.304884 lat_ms=13.059
+round=3 variant=logical wl=upd1 tps=22138.202295 lat_ms=0.361
+round=3 variant=logical wl=ins1 tps=22011.645625 lat_ms=0.363
+round=3 variant=logical wl=bulk tps=786.141772 lat_ms=5.088
+round=3 variant=logical drain_changes=5520969 drain_s=19
+DONE

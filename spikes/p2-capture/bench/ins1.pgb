@@ -1,0 +1,1 @@
+insert into bench(v, t) values (1, 'x');

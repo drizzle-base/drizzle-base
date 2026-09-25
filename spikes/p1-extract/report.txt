@@ -1,0 +1,307 @@
+
+## A01 eq pk  [single]
+   INTERVAL  users  @root  id = "0190a000-0000-7000-8000-000000000001"
+
+## A02 eq indexed  [single]
+   INTERVAL  users  @root  email = "a@b.c"
+
+## A03 range gt/lte  [single]
+   INTERVAL  users  @root  age > 18; age <= 65
+
+## A04 between  [single]
+   INTERVAL  users  @root  age between [18,65]
+
+## A05 inArray  [single]
+   INTERVAL  users  @root  age in [18,21,30]
+
+## A06 isNull  [single]
+   INTERVAL  users  @root  manager_id isnull null
+
+## A07 eq + isNotNull  [single]
+   INTERVAL  users  @root  deleted = false; pred IS NOT NULL users.age
+
+## A08 or same column  [single]
+   INTERVAL  users  @root  age = 18 OR age = 30
+
+## A09 or diff columns  [single]
+   PREDICATE users  @root  pred ((users.age = $1) OR (users.email = $2))
+
+## A10 ne  [single]
+   PREDICATE users  @root  pred (users.age != $1)
+
+## A11 like  [single]
+   PREDICATE users  @root  pred (users.name LIKE $1)
+
+## A12 ilike  [single]
+   PREDICATE users  @root  pred (users.name ILIKE $1)
+
+## A13 not(eq)  [single]
+   PREDICATE users  @root  pred NOT (users.deleted = $1)
+
+## A14 notInArray  [single]
+   PREDICATE users  @root  pred (users.age NOT IN ($1, $2))
+
+## A15 no where  [single]
+   TABLE     users  @root  
+
+## A16 order+limit  [single]
+   INTERVAL  posts  @root  author_id = "0190a000-0000-7000-8000-000000000001"
+   · limit (precision refinement possible: bound by the last row's sort key)
+
+## A17 order+limit+offset  [single]
+   TABLE     posts  @root  
+   · offset (a change before the window shifts it: predicate still covers it)
+   · limit (precision refinement possible: bound by the last row's sort key)
+
+## A18 partial columns  [single]
+   INTERVAL  users  @root  age = 30
+
+## A19 distinct  [single]
+   TABLE     users  @root  
+
+## A20 cursor (gt, order, limit)  [single]
+   INTERVAL  posts  @root  id > 100
+   · limit (precision refinement possible: bound by the last row's sort key)
+
+## A21 expression lower()  [single]
+   PREDICATE users  @root  pred (lower(users.email) = $1)
+
+## A22 arithmetic  [single]
+   PREDICATE posts  @root  pred ((posts.views * 2) > $1)
+
+## A23 column vs column  [single]
+   PREDICATE cities  @root  pred (cities.population > cities.id)
+
+## A24 composite index prefix+range  [single]
+   INTERVAL  posts  @root  author_id = "0190a000-0000-7000-8000-000000000001"; created_at >= "2026-01-01T00:00:00.000Z"
+
+## A25 undefined in and()  [single]
+   INTERVAL  users  @root  age = 30
+
+## A26 sql.placeholder (prepared)  [single]
+   INTERVAL  users  @root  id = "0190a000-0000-7000-8000-000000000001"
+
+## B01 left join (your example)  [join]
+   INTERVAL  countries  @root  id = 10
+   DYNAMIC   cities  @root  country_id ∈ keys of countries.id (from the result)
+
+## B02 inner join + filter both  [join]
+   INTERVAL  posts  @root  published = true
+   INTERVAL  users  @root  age > 18
+
+## B03 right join  [join]
+   KEYQUERY  posts  @root  author_id ∈ keys of users.id (NOT all in the result: side query)
+   INTERVAL  users  @root  id = "0190a000-0000-7000-8000-000000000001"
+
+## B04 full join  [join]
+   TABLE     posts  @root  
+   TABLE     users  @root  
+   · join:FULL JOIN
+
+## B05 three-way join  [join]
+   KEYQUERY  comments  @root  post_id ∈ keys of posts.id (NOT all in the result: side query)
+   KEYQUERY  posts  @root  author_id ∈ keys of users.id (NOT all in the result: side query)
+   INTERVAL  users  @root  id = "0190a000-0000-7000-8000-000000000001"
+
+## B06 self join (alias)  [join]
+   INTERVAL  users  @root  id = "0190a000-0000-7000-8000-000000000001"
+   DYNAMIC   users as manager  @root  id ∈ keys of users.manager_id (from the result)
+
+## B07 join ON with extra cond  [join]
+   INTERVAL  users  @root  age = 30
+   DYNAMIC   posts  @root  published = true; author_id ∈ keys of users.id (from the result)
+
+## B08 join no where  [join]
+   TABLE     countries  @root  
+   KEYQUERY  cities  @root  country_id ∈ keys of countries.id (NOT all in the result: side query)
+
+## B09 cross join  [join]
+   TABLE     countries  @root  
+   TABLE     cities  @root  
+   · join:CROSS JOIN
+
+## B10 left join lateral  [join]
+   INTERVAL  users  @root  id = "0190a000-0000-7000-8000-000000000001"
+   DYNAMIC   posts  @root/lateral:recent  author_id ∈ keys of users.id (from the result)
+   · limit (precision refinement possible: bound by the last row's sort key)
+   · dropped-conjunct: true
+
+## C01 count(*)  [agg]
+   INTERVAL  posts  @root  author_id = "0190a000-0000-7000-8000-000000000001"
+
+## C02 $count  [agg]
+   INTERVAL  posts  @root  published = true
+
+## C03 groupBy + sum  [agg]
+   TABLE     posts  @root  
+   · groupBy/aggregate: dynamic keys must be projected by the runtime
+
+## C04 groupBy + having  [agg]
+   TABLE     posts  @root  
+   · having (post-aggregate filter: no narrowing, correct as-is)
+   · groupBy/aggregate: dynamic keys must be projected by the runtime
+
+## C05 join + groupBy  [agg]
+   TABLE     countries  @root  
+   DYNAMIC   cities  @root  country_id ∈ keys of countries.id (from the result)
+   · groupBy/aggregate: dynamic keys must be projected by the runtime
+
+## C06 avg/max/countDistinct  [agg]
+   INTERVAL  users  @root  deleted = false
+
+## D01 inArray(subquery)  [subq]
+   KEYQUERY  posts  @root  author_id ∈ keys of subquery#1.id (hidden keys) (NOT all in the result: side query)
+   INTERVAL  users  @IN-subquery  age > 30
+   · subquery-values-not-in-result
+
+## D02 exists correlated  [subq]
+   KEYQUERY  users  @root  id ∈ keys of posts.author_id (NOT all in the result: side query)
+   INTERVAL  posts  @EXISTS  published = true
+
+## D03 CTE $with  [subq]
+   INTERVAL  users  @root/cte:adults  age >= 18
+
+## D04 subquery in FROM  [subq]
+   TABLE     posts  @root/derived:sq  
+   · groupBy/aggregate: dynamic keys must be projected by the runtime
+   · dropped-conjunct: (n > $1)
+
+## D05 scalar subquery column  [subq]
+   INTERVAL  users  @root  id = "0190a000-0000-7000-8000-000000000001"
+   PREDICATE posts  @root/column  pred (author_id = id)
+
+## D06 join to subquery  [subq]
+   INTERVAL  users  @root  id = "0190a000-0000-7000-8000-000000000001"  | dropped: (pp.author_id = users.id)
+   INTERVAL  posts  @root/derived:pp  published = true
+
+## E01 findMany + with posts  [rqb]
+   TABLE     users  @root  
+   DYNAMIC   posts as users_posts  @root/lateral:users_posts  author_id ∈ keys of users.id (from the result)
+   · dropped-conjunct: true
+
+## E02 findFirst by id + with  [rqb]
+   INTERVAL  users  @root  id = "0190a000-0000-7000-8000-000000000001"
+   DYNAMIC   posts as users_posts  @root/lateral:users_posts  author_id ∈ keys of users.id (from the result)
+   · dropped-conjunct: true
+   · limit (precision refinement possible: bound by the last row's sort key)
+
+## E03 nested with  [rqb]
+   INTERVAL  users  @root  age = 30
+   DYNAMIC   posts as users_posts  @root/lateral:users_posts  author_id ∈ keys of users.id (from the result)
+   DYNAMIC   comments as users_posts_comments  @root/lateral:users_posts/lateral:users_posts_comments  post_id ∈ keys of users_posts.id (from the result)
+   · dropped-conjunct: true
+
+## E04 with filtered+limited  [rqb]
+   INTERVAL  users  @root  id = "0190a000-0000-7000-8000-000000000001"
+   DYNAMIC   posts as users_posts  @root/lateral:users_posts/derived:users_posts  published = true; author_id ∈ keys of users.id (from the result)
+   · limit (precision refinement possible: bound by the last row's sort key)
+   · dropped-conjunct: true
+
+## E05 one() relation  [rqb]
+   INTERVAL  posts  @root  published = true
+   DYNAMIC   users as posts_author  @root/lateral:posts_author/derived:posts_author  id ∈ keys of posts.author_id (from the result)
+   · limit (precision refinement possible: bound by the last row's sort key)
+   · dropped-conjunct: true
+
+## E06 self relation  [rqb]
+   INTERVAL  users  @root  id = "0190a000-0000-7000-8000-000000000001"
+   DYNAMIC   users as users_manager  @root/lateral:users_manager/derived:users_manager  id ∈ keys of users.manager_id (from the result)
+   · limit (precision refinement possible: bound by the last row's sort key)
+   · dropped-conjunct: true
+
+## E07 columns + extras  [rqb]
+   INTERVAL  users  @root  age = 30
+
+## E08 where callback  [rqb]
+   INTERVAL  users  @root  deleted = false; age > 18
+   · limit (precision refinement possible: bound by the last row's sort key)
+
+## E09 your example (countries/cities)  [rqb]
+   INTERVAL  countries  @root  id = 10
+   DYNAMIC   cities as countries_cities  @root/lateral:countries_cities  country_id ∈ keys of countries.id (from the result)
+   · dropped-conjunct: true
+   · limit (precision refinement possible: bound by the last row's sort key)
+
+## F01 sql`` in where  [raw]
+   INTERVAL  users  @root  age > 18
+
+## F02 now()  [raw]
+   TABLE     posts  @root    | dropped: (posts.created_at > (now() - '1 day'::interval))
+   · nondeterministic:now()
+
+## F03 random order  [raw]
+   TABLE     posts  @root  
+   · limit (precision refinement possible: bound by the last row's sort key)
+   · nondeterministic:random()
+
+## F04 db.execute raw  [raw]
+   INTERVAL  users  @root  age > 18
+
+## F05 db.execute raw string  [raw]
+   INTERVAL  users as u  @root  age = 30
+   KEYQUERY  posts as p  @root  author_id ∈ keys of u.id (NOT all in the result: side query)
+
+## F06 jsonb/array op  [raw]
+   PREDICATE users  @root  pred (users.email = any(($1, $2)))
+
+## G01 union  [setop]
+   INTERVAL  users  @root/union-L  age = 1
+   INTERVAL  posts  @root/union-R  published = true
+
+## G02 unionAll  [setop]
+   TABLE     users  @root/union all-L  
+   TABLE     countries  @root/union all-R  
+
+## G03 intersect  [setop]
+   PARSE ERROR: Error: Syntax error at line 1 col 53:
+   TABLE     users  @unparsed  
+   TABLE     posts  @unparsed  
+   · UNPARSED → every mentioned table
+
+## G04 except  [setop]
+   PARSE ERROR: Error: Syntax error at line 1 col 28:
+   TABLE     users  @unparsed  
+   TABLE     posts  @unparsed  
+   · UNPARSED → every mentioned table
+
+## W01 insert values  [write]
+   · write:insert posts
+
+## W02 insert default uuid  [write]
+   · write:insert users
+
+## W03 update by pk  [write]
+   INTERVAL  users  @root/update-target  id = "0190a000-0000-7000-8000-000000000001"
+   · write:update users — rows touched = the target's read-set below
+
+## W04 update by predicate  [write]
+   PREDICATE posts  @root/update-target  pred (posts.title LIKE $2)
+   · write:update posts — rows touched = the target's read-set below
+
+## W05 update expression  [write]
+   INTERVAL  posts  @root/update-target  id = 1
+   · write:update posts — rows touched = the target's read-set below
+
+## W06 delete by predicate  [write]
+   INTERVAL  comments  @root/delete-target  author_id = "0190a000-0000-7000-8000-000000000001"
+   · write:delete comments — rows touched = the target's read-set below
+
+## W07 upsert  [write]
+   · write:insert posts +onConflict
+
+## W08 insert from select  [write]
+   INTERVAL  posts  @root/insert-select  published = true
+   · write:insert comments
+
+## W09 update from join  [write]
+   KEYQUERY  posts  @root/update-target  author_id ∈ keys of users.id (NOT all in the result: side query)
+   INTERVAL  users  @root/update-from  deleted = true
+   · write:update posts — rows touched = the target's read-set below
+
+TALLY (scans): {
+  INTERVAL: 49,
+  PREDICATE: 12,
+  TABLE: 21,
+  DYNAMIC: 13,
+  KEYQUERY: 8,
+}

@@ -1,0 +1,2 @@
+\set a random(1, 99000)
+update bench set v = v + 1 where id between :a and :a + 999;

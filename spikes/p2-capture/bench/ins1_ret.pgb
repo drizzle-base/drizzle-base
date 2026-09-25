@@ -1,0 +1,1 @@
+insert into bench(v, t) values (1, 'x') returning to_jsonb(old), to_jsonb(new);

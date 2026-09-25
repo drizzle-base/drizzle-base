@@ -1,0 +1,228 @@
+
+## A01 eq pk
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where "users"."id" = $1 ["0190a000-0000-7000-8000-000000000001"]
+
+## A02 eq indexed
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where "users"."email" = $1 ["a@b.c"]
+
+## A03 range gt/lte
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where ("users"."age" > $1 and "users"."age" <= $2) [18,65]
+
+## A04 between
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where "users"."age" between $1 and $2 [18,65]
+
+## A05 inArray
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where "users"."age" in ($1, $2, $3) [18,21,30]
+
+## A06 isNull
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where "users"."manager_id" is null []
+
+## A07 eq + isNotNull
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where ("users"."deleted" = $1 and "users"."age" is not null) [false]
+
+## A08 or same column
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where ("users"."age" = $1 or "users"."age" = $2) [18,30]
+
+## A09 or diff columns
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where ("users"."age" = $1 or "users"."email" = $2) [18,"x"]
+
+## A10 ne
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where "users"."age" <> $1 [18]
+
+## A11 like
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where "users"."name" like $1 ["Dan%"]
+
+## A12 ilike
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where "users"."name" ilike $1 ["%dan%"]
+
+## A13 not(eq)
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where not "users"."deleted" = $1 [true]
+
+## A14 notInArray
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where "users"."age" not in ($1, $2) [1,2]
+
+## A15 no where
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" []
+
+## A16 order+limit
+select "id", "author_id", "title", "published", "views", "created_at" from "posts" where "posts"."author_id" = $1 order by "posts"."created_at" desc limit $2 ["0190a000-0000-7000-8000-000000000001",10]
+
+## A17 order+limit+offset
+select "id", "author_id", "title", "published", "views", "created_at" from "posts" order by "posts"."id" asc limit $1 offset $2 [10,20]
+
+## A18 partial columns
+select "id", "name" from "users" where "users"."age" = $1 [30]
+
+## A19 distinct
+select distinct "age" from "users" []
+
+## A20 cursor (gt, order, limit)
+select "id", "author_id", "title", "published", "views", "created_at" from "posts" where "posts"."id" > $1 order by "posts"."id" asc limit $2 [100,20]
+
+## A21 expression lower()
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where lower("users"."email") = $1 ["a@b.c"]
+
+## A22 arithmetic
+select "id", "author_id", "title", "published", "views", "created_at" from "posts" where "posts"."views" * 2 > $1 [100]
+
+## A23 column vs column
+select "id", "country_id", "name", "population" from "cities" where "cities"."population" > "cities"."id" []
+
+## A24 composite index prefix+range
+select "id", "author_id", "title", "published", "views", "created_at" from "posts" where ("posts"."author_id" = $1 and "posts"."created_at" >= $2) ["0190a000-0000-7000-8000-000000000001","2026-01-01T00:00:00.000Z"]
+
+## A25 undefined in and()
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where "users"."age" = $1 [30]
+
+## A26 sql.placeholder (prepared)
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where "users"."id" = $1 ["0190a000-0000-7000-8000-000000000001"]
+
+## B01 left join (your example)
+select "countries"."id", "countries"."name", "countries"."population", "cities"."id", "cities"."country_id", "cities"."name", "cities"."population" from "countries" left join "cities" on "cities"."country_id" = "countries"."id" where "countries"."id" = $1 [10]
+
+## B02 inner join + filter both
+select "posts"."id", "posts"."author_id", "posts"."title", "posts"."published", "posts"."views", "posts"."created_at", "users"."id", "users"."name", "users"."email", "users"."age", "users"."manager_id", "users"."deleted", "users"."created_at" from "posts" inner join "users" on "posts"."author_id" = "users"."id" where ("posts"."published" = $1 and "users"."age" > $2) [true,18]
+
+## B03 right join
+select "posts"."id", "posts"."author_id", "posts"."title", "posts"."published", "posts"."views", "posts"."created_at", "users"."id", "users"."name", "users"."email", "users"."age", "users"."manager_id", "users"."deleted", "users"."created_at" from "posts" right join "users" on "posts"."author_id" = "users"."id" where "users"."id" = $1 ["0190a000-0000-7000-8000-000000000001"]
+
+## B04 full join
+select "posts"."id", "posts"."author_id", "posts"."title", "posts"."published", "posts"."views", "posts"."created_at", "users"."id", "users"."name", "users"."email", "users"."age", "users"."manager_id", "users"."deleted", "users"."created_at" from "posts" full join "users" on "posts"."author_id" = "users"."id" []
+
+## B05 three-way join
+select "comments"."id", "comments"."post_id", "comments"."author_id", "comments"."body", "posts"."id", "posts"."author_id", "posts"."title", "posts"."published", "posts"."views", "posts"."created_at", "users"."id", "users"."name", "users"."email", "users"."age", "users"."manager_id", "users"."deleted", "users"."created_at" from "comments" inner join "posts" on "comments"."post_id" = "posts"."id" inner join "users" on "posts"."author_id" = "users"."id" where "users"."id" = $1 ["0190a000-0000-7000-8000-000000000001"]
+
+## B06 self join (alias)
+select "users"."id", "users"."name", "users"."email", "users"."age", "users"."manager_id", "users"."deleted", "users"."created_at", "manager"."id", "manager"."name", "manager"."email", "manager"."age", "manager"."manager_id", "manager"."deleted", "manager"."created_at" from "users" left join "users" "manager" on "users"."manager_id" = "manager"."id" where "users"."id" = $1 ["0190a000-0000-7000-8000-000000000001"]
+
+## B07 join ON with extra cond
+select "users"."id", "users"."name", "users"."email", "users"."age", "users"."manager_id", "users"."deleted", "users"."created_at", "posts"."id", "posts"."author_id", "posts"."title", "posts"."published", "posts"."views", "posts"."created_at" from "users" left join "posts" on ("posts"."author_id" = "users"."id" and "posts"."published" = $1) where "users"."age" = $2 [true,30]
+
+## B08 join no where
+select "countries"."id", "countries"."name", "countries"."population", "cities"."id", "cities"."country_id", "cities"."name", "cities"."population" from "countries" inner join "cities" on "cities"."country_id" = "countries"."id" []
+
+## B09 cross join
+select "countries"."id", "countries"."name", "countries"."population", "cities"."id", "cities"."country_id", "cities"."name", "cities"."population" from "countries" cross join "cities" []
+
+## B10 left join lateral
+select "users"."id", "users"."name", "users"."email", "users"."age", "users"."manager_id", "users"."deleted", "users"."created_at", "recent"."id", "recent"."author_id", "recent"."title", "recent"."published", "recent"."views", "recent"."created_at" from "users" left join lateral (select "id", "author_id", "title", "published", "views", "created_at" from "posts" where "posts"."author_id" = "users"."id" order by "posts"."created_at" desc limit $1) "recent" on true where "users"."id" = $2 [3,"0190a000-0000-7000-8000-000000000001"]
+
+## C01 count(*)
+select count(*) from "posts" where "posts"."author_id" = $1 ["0190a000-0000-7000-8000-000000000001"]
+
+## C02 $count  ERROR TypeError: undefined is not an object (evaluating 'res[0].count')
+select count(*) as count from "posts" where "posts"."published" = $1; [true]
+
+## C03 groupBy + sum
+select "author_id", sum("views") from "posts" group by "posts"."author_id" []
+
+## C04 groupBy + having
+select "author_id", count(*) from "posts" group by "posts"."author_id" having count(*) > $1 [5]
+
+## C05 join + groupBy
+select "countries"."name", count("cities"."id") from "countries" left join "cities" on "cities"."country_id" = "countries"."id" group by "countries"."id" []
+
+## C06 avg/max/countDistinct
+select avg("age"), max("age"), count(distinct "email") from "users" where "users"."deleted" = $1 [false]
+
+## D01 inArray(subquery)
+select "id", "author_id", "title", "published", "views", "created_at" from "posts" where "posts"."author_id" in (select "id" from "users" where "users"."age" > $1) [30]
+
+## D02 exists correlated
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where exists (select "id", "author_id", "title", "published", "views", "created_at" from "posts" where ("posts"."author_id" = "users"."id" and "posts"."published" = $1)) [true]
+
+## D03 CTE $with
+with "adults" as (select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where "users"."age" >= $1) select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "adults" [18]
+
+## D04 subquery in FROM
+select "author_id", "n" from (select "author_id", count(*) as "n" from "posts" group by "posts"."author_id") "sq" where "n" > $1 [3]
+
+## D05 scalar subquery column
+select "id", (select count(*) from "posts" where "author_id" = "id") from "users" where "users"."id" = $1 ["0190a000-0000-7000-8000-000000000001"]
+
+## D06 join to subquery
+select "users"."id", "users"."name", "users"."email", "users"."age", "users"."manager_id", "users"."deleted", "users"."created_at", "pp"."id", "pp"."author_id", "pp"."title", "pp"."published", "pp"."views", "pp"."created_at" from "users" inner join (select "id", "author_id", "title", "published", "views", "created_at" from "posts" where "posts"."published" = $1) "pp" on "pp"."author_id" = "users"."id" where "users"."id" = $2 [true,"0190a000-0000-7000-8000-000000000001"]
+
+## E01 findMany + with posts
+select "users"."id", "users"."name", "users"."email", "users"."age", "users"."manager_id", "users"."deleted", "users"."created_at", "users_posts"."data" as "posts" from "users" "users" left join lateral (select coalesce(json_agg(json_build_array("users_posts"."id", "users_posts"."author_id", "users_posts"."title", "users_posts"."published", "users_posts"."views", "users_posts"."created_at")), '[]'::json) as "data" from "posts" "users_posts" where "users_posts"."author_id" = "users"."id") "users_posts" on true []
+
+## E02 findFirst by id + with
+select "users"."id", "users"."name", "users"."email", "users"."age", "users"."manager_id", "users"."deleted", "users"."created_at", "users_posts"."data" as "posts" from "users" "users" left join lateral (select coalesce(json_agg(json_build_array("users_posts"."id", "users_posts"."author_id", "users_posts"."title", "users_posts"."published", "users_posts"."views", "users_posts"."created_at")), '[]'::json) as "data" from "posts" "users_posts" where "users_posts"."author_id" = "users"."id") "users_posts" on true where "users"."id" = $1 limit $2 ["0190a000-0000-7000-8000-000000000001",1]
+
+## E03 nested with
+select "users"."id", "users"."name", "users"."email", "users"."age", "users"."manager_id", "users"."deleted", "users"."created_at", "users_posts"."data" as "posts" from "users" "users" left join lateral (select coalesce(json_agg(json_build_array("users_posts"."id", "users_posts"."author_id", "users_posts"."title", "users_posts"."published", "users_posts"."views", "users_posts"."created_at", "users_posts_comments"."data")), '[]'::json) as "data" from "posts" "users_posts" left join lateral (select coalesce(json_agg(json_build_array("users_posts_comments"."id", "users_posts_comments"."post_id", "users_posts_comments"."author_id", "users_posts_comments"."body")), '[]'::json) as "data" from "comments" "users_posts_comments" where "users_posts_comments"."post_id" = "users_posts"."id") "users_posts_comments" on true where "users_posts"."author_id" = "users"."id") "users_posts" on true where "users"."age" = $1 [30]
+
+## E04 with filtered+limited
+select "users"."id", "users"."name", "users"."email", "users"."age", "users"."manager_id", "users"."deleted", "users"."created_at", "users_posts"."data" as "posts" from "users" "users" left join lateral (select coalesce(json_agg(json_build_array("users_posts"."id", "users_posts"."author_id", "users_posts"."title", "users_posts"."published", "users_posts"."views", "users_posts"."created_at") order by "users_posts"."created_at" desc), '[]'::json) as "data" from (select * from "posts" "users_posts" where ("users_posts"."author_id" = "users"."id" and "users_posts"."published" = $1) order by "users_posts"."created_at" desc limit $2) "users_posts") "users_posts" on true where "users"."id" = $3 limit $4 [true,5,"0190a000-0000-7000-8000-000000000001",1]
+
+## E05 one() relation
+select "posts"."id", "posts"."author_id", "posts"."title", "posts"."published", "posts"."views", "posts"."created_at", "posts_author"."data" as "author" from "posts" "posts" left join lateral (select json_build_array("posts_author"."id", "posts_author"."name", "posts_author"."email", "posts_author"."age", "posts_author"."manager_id", "posts_author"."deleted", "posts_author"."created_at") as "data" from (select * from "users" "posts_author" where "posts_author"."id" = "posts"."author_id" limit $1) "posts_author") "posts_author" on true where "posts"."published" = $2 [1,true]
+
+## E06 self relation
+select "users"."id", "users"."name", "users"."email", "users"."age", "users"."manager_id", "users"."deleted", "users"."created_at", "users_manager"."data" as "manager" from "users" "users" left join lateral (select json_build_array("users_manager"."id", "users_manager"."name", "users_manager"."email", "users_manager"."age", "users_manager"."manager_id", "users_manager"."deleted", "users_manager"."created_at") as "data" from (select * from "users" "users_manager" where "users_manager"."id" = "users"."manager_id" limit $1) "users_manager") "users_manager" on true where "users"."id" = $2 limit $3 [1,"0190a000-0000-7000-8000-000000000001",1]
+
+## E07 columns + extras
+select "id", lower("name") as "lname" from "users" "users" where "users"."age" = $1 [30]
+
+## E08 where callback
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" "users" where ("users"."deleted" = $1 and "users"."age" > $2) order by "users"."created_at" asc limit $3 [false,18,10]
+
+## E09 your example (countries/cities)
+select "countries"."id", "countries"."name", "countries"."population", "countries_cities"."data" as "cities" from "countries" "countries" left join lateral (select coalesce(json_agg(json_build_array("countries_cities"."id", "countries_cities"."country_id", "countries_cities"."name", "countries_cities"."population")), '[]'::json) as "data" from "cities" "countries_cities" where "countries_cities"."country_id" = "countries"."id") "countries_cities" on true where "countries"."id" = $1 limit $2 [10,1]
+
+## F01 sql`` in where
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where "users"."age" > $1 [18]
+
+## F02 now()
+select "id", "author_id", "title", "published", "views", "created_at" from "posts" where "posts"."created_at" > now() - interval '1 day' []
+
+## F03 random order
+select "id", "author_id", "title", "published", "views", "created_at" from "posts" order by random() limit $1 [1]
+
+## F04 db.execute raw
+select * from users where age > $1 [18]
+
+## F05 db.execute raw string
+select u.*, p.title from users u join posts p on p.author_id = u.id where u.age = 30 []
+
+## F06 jsonb/array op
+select "id", "name", "email", "age", "manager_id", "deleted", "created_at" from "users" where "users"."email" = any(($1, $2)) ["a","b"]
+
+## G01 union
+(select "id" from "users" where "users"."age" = $1) union (select "author_id" from "posts" where "posts"."published" = $2) [1,true]
+
+## G02 unionAll
+(select "name" from "users") union all (select "name" from "countries") []
+
+## G03 intersect
+(select "id" from "users" where "users"."age" > $1) intersect (select "author_id" from "posts") [18]
+
+## G04 except
+(select "id" from "users") except (select "author_id" from "posts") []
+
+## W01 insert values
+insert into "posts" ("id", "author_id", "title", "published", "views", "created_at") values ($1, $2, $3, default, default, default) [1,"0190a000-0000-7000-8000-000000000001","t"]
+
+## W02 insert default uuid
+insert into "users" ("id", "name", "email", "age", "manager_id", "deleted", "created_at") values (default, $1, $2, default, default, default, default) ["n","e"]
+
+## W03 update by pk
+update "users" set "name" = $1 where "users"."id" = $2 ["x","0190a000-0000-7000-8000-000000000001"]
+
+## W04 update by predicate
+update "posts" set "published" = $1 where "posts"."title" like $2 [true,"draft%"]
+
+## W05 update expression
+update "posts" set "views" = "posts"."views" + 1 where "posts"."id" = $1 [1]
+
+## W06 delete by predicate
+delete from "comments" where "comments"."author_id" = $1 ["0190a000-0000-7000-8000-000000000001"]
+
+## W07 upsert
+insert into "posts" ("id", "author_id", "title", "published", "views", "created_at") values ($1, $2, $3, default, default, default) on conflict ("id") do update set "title" = $4 [1,"0190a000-0000-7000-8000-000000000001","t","t2"]
+
+## W08 insert from select
+insert into "comments" ("id", "post_id", "author_id", "body") select "id", "id", "author_id", "title" from "posts" where "posts"."published" = $1 [true]
+
+## W09 update from join
+update "posts" set "published" = $1 from "users" where ("posts"."author_id" = "users"."id" and "users"."deleted" = $2) [false,true]
