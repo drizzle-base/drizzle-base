@@ -5,6 +5,8 @@ import type { SQL } from "bun";
 import { BARRIER_PREFIX } from "./types";
 
 export async function emitBarrier(sql: SQL, id: string): Promise<string> {
-	const [row] = await sql`select pg_logical_emit_message(false, ${BARRIER_PREFIX}, ${id})::text as lsn`;
+	// flush = true (PG 17+): a non-transactional message is not flushed by any commit, and the walsender only
+	// sends flushed WAL. Without it the barrier waits for the WAL writer — ~180 ms median, measured.
+	const [row] = await sql`select pg_logical_emit_message(false, ${BARRIER_PREFIX}, ${id}, true)::text as lsn`;
 	return row.lsn as string;
 }

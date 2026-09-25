@@ -98,6 +98,28 @@ describe("PgoutputCapture", () => {
 		});
 	}, 30_000);
 
+	test("a barrier arrives promptly on a quiet database (median of 20 under 50 ms)", async () => {
+		// Read-your-writes and every flush cycle wait on a barrier; a barrier left for the WAL writer to flush
+		// costs up to wal_writer_delay (200 ms) per wait.
+		await withCaptureSchema(async (sql, n) => {
+			const c = collector();
+			const cap = await started(sql, n, c);
+			try {
+				const ms: number[] = [];
+				for (let i = 0; i < 20; i++) {
+					const t0 = performance.now();
+					await c.sync(sql, `lat-${i}`);
+					ms.push(performance.now() - t0);
+					await Bun.sleep(20);
+				}
+				ms.sort((a, b) => a - b);
+				expect(ms[10]!).toBeLessThan(50);
+			} finally {
+				await cap.stop();
+			}
+		});
+	}, 30_000);
+
 	test("a rolled-back transaction is never delivered", async () => {
 		await withCaptureSchema(async (sql, n) => {
 			await sql.unsafe(`create table "${n.schema}".t(id int primary key)`);
