@@ -175,7 +175,8 @@ was lost. S2 (`docs/superpowers/plans/2026-09-25-studio-00-2-filters-sort-column
 menu, columns panel and resizing, page size, count on demand (`withTotal`/`hasMore`), and the view as a serialisable
 `StudioView` a host binds to its URL (the playground does; the studio never touches the URL). S3a (`docs/superpowers/plans/2026-09-25-studio-00-3a-editing.md`): pending edits per table, an atomic,
 conflict-aware save (`applyEdits` with `expected`), live conflicts, typed editors (text, numbers, boolean, enum,
-NULL/DEFAULT, bytea, json and arrays in an expanded editor), add and delete rows. Next: S3b (date/time picker, Expand Row panel, code editor decision); S4 selection, clipboard, export, foreign keys; S5 import UI,
+NULL/DEFAULT, bytea, json and arrays in an expanded editor), add and delete rows. S3b (`docs/superpowers/plans/2026-09-25-studio-00-3b-editors.md`): a date/time picker that edits Postgres text by
+parts, the Expand Row panel on the same draft, CodeMirror 6 loaded on demand; save errors per table. Next: S4 selection, clipboard, export, foreign keys; S5 import UI,
 structure tab, final review.
 
 ## 6. What happens later (not this session)
