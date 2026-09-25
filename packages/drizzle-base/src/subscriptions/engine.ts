@@ -227,9 +227,22 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
     return p;
   }
 
+  // P-A7: read-your-writes by position. After COMMIT, a barrier written after it proves the stream has applied the
+  // commit (its entries are dirty); the first cycle that starts after that exports a snapshot containing the commit.
+  // The reply names that cycle; the client resolves when it has received a transition at or after it — a slow
+  // re-run delays the transition, never the reply. A confirmation failure is not a mutation failure.
   async mutate<A, R>(def: MutationDef<S, A, R>, args: A): Promise<{ value: R; cycle: number; commitLsn: string }> {
     const run = await this.opts.runtime.runMutation(def, args);
-    return { value: run.value, cycle: await this.flush(), commitLsn: run.commitLsn }; // Task 5 replaces this
+    try {
+      if (this.down || this.closed) throw new EngineDownError();
+      await this.barrier();
+      const cycle = this.started + 1;
+      this.forced = true;
+      this.schedule();
+      return { value: run.value, cycle, commitLsn: run.commitLsn };
+    } catch (e) {
+      throw new CommittedUnconfirmedError(run.commitLsn, run.value, e);
+    }
   }
 
   reset(_reason: string): void {} // Task 7
