@@ -237,7 +237,8 @@ export function createMockDataSource(opts: MockOptions): MockDataSource {
         t.def.info.columns.some((c) => c.kind === "text" && !c.isPrimaryKey),
     );
     const t = candidates[Math.floor(rand() * candidates.length)];
-    const row = t?.rows[Math.floor(rand() * t.rows.length)];
+    // Among the first rows (seed data is stored in key order), so the change lands on a page someone is looking at.
+    const row = t?.rows[Math.floor(rand() * Math.min(t.rows.length, 20))];
     const column = t?.def.info.columns.find((c) => c.kind === "text" && !c.isPrimaryKey);
     if (!t || !row || !column) return null;
     const key = Object.fromEntries(t.def.info.primaryKey.map((k) => [k, row[k] ?? null]));

@@ -66,9 +66,19 @@ describe("mock data source", () => {
   test("externalWrite() with no argument changes some row and pushes", async () => {
     const log = createMemoryLog();
     const ds = createMockDataSource({ dataset: demoDataset(1), log, seed: 7 });
-    await ds.externalWrite();
-    expect(log.readSince(0)).toHaveLength(1);
-    expect(log.readSince(0)[0]?.op.kind).toBe("update");
+    for (let i = 0; i < 20; i++) await ds.externalWrite();
+    const ops = log.readSince(0).map((e) => e.op);
+    expect(ops).toHaveLength(20);
+    // It lands where a person is looking: among the first 20 rows (by key) of its table, so the first page shows it.
+    const dataset = demoDataset(1);
+    for (const op of ops) {
+      expect(op.kind).toBe("update");
+      if (op.kind !== "update") continue;
+      const rows =
+        dataset.tables.find((t) => t.info.schema === op.table.schema && t.info.name === op.table.name)?.rows ?? [];
+      const firstKeys = rows.slice(0, 20).map((r) => JSON.stringify(r["id"] ?? null));
+      expect(firstKeys).toContain(JSON.stringify(op.changes[0]?.key["id"] ?? "missing"));
+    }
   });
 
   test("a source opened after writes replays the log", async () => {
