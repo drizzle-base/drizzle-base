@@ -68,9 +68,11 @@ export function Studio({
   // Keyed by content: a controlled host may hand an equal but new view object on every render.
   const viewKey = JSON.stringify(view);
   const filtersKey = JSON.stringify([view.table, view.filters]);
-  const withTotal = view.filters.length === 0 || countedFor === filtersKey;
   // biome-ignore lint/correctness/useExhaustiveDependencies: viewKey stands for view's content
-  const resolved = useMemo(() => (table ? toPageRequest(view, table, withTotal) : null), [table, viewKey, withTotal]);
+  const base = useMemo(() => (table ? toPageRequest(view, table, false) : null), [table, viewKey]);
+  // Count when nothing filters the rows (what applies, not what the view names) or when asked to.
+  const withTotal = (base?.req.filters.length ?? 0) === 0 || countedFor === filtersKey;
+  const resolved = useMemo(() => (base ? { ...base, req: { ...base.req, withTotal } } : null), [base, withTotal]);
   const { page, error, changed } = usePage(dataSource, resolved?.req ?? null, table);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: viewKey stands for view's content

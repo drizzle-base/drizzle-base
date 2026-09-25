@@ -28,7 +28,7 @@ describe("boundaries", () => {
       ...f,
       path: f.path.slice(root.length + 1),
     }));
-    expect(files.length).toBeGreaterThan(0);
+    for (const dir of ["src", "playground"]) expect(collectSources([join(root, dir)]).length).toBeGreaterThan(0);
     expect(boundaryViolations(files)).toEqual([]);
   });
 });

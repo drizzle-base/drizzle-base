@@ -209,6 +209,17 @@ describe("<Studio>", () => {
     expect(status.textContent).toContain('order "x"');
   });
 
+  test("a view whose filters are all ignored is unfiltered, so it counts", async () => {
+    const { ds } = sources();
+    render(
+      <Studio
+        dataSource={ds}
+        defaultView={{ ...EMPTY_VIEW, table: "public.users", filters: [{ column: "nope", op: "eq", text: "1" }] }}
+      />,
+    );
+    expect(await screen.findByText("1 - 50 of 3000")).toBeTruthy();
+  });
+
   test("a view naming a table this database lacks says so", async () => {
     const { ds } = sources();
     render(<Studio dataSource={ds} defaultView={{ ...EMPTY_VIEW, table: "public.gone" }} />);
