@@ -67,6 +67,10 @@ export class Registry<K> {
     return out;
   }
 
+  isDirty(key: K): boolean {
+    return this.dirty.has(key);
+  }
+
   dirtyKeys(): K[] {
     return [...this.dirty];
   }

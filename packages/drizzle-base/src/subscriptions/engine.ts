@@ -22,9 +22,11 @@ import { Registry } from "./registry";
 import { stableHash } from "./stable";
 import { contains, low32, type Visibility, visibilityOf } from "./xid";
 
+// provisional: a subscriber's FIRST value, given while the entry is dirty — older than commits the engine has
+// already applied. That subscriber is guaranteed one more event after the entry's next re-run, changed or not.
 export type EngineEvent<R> =
-  | { kind: "value"; cycle: number | null; value: R }
-  | { kind: "error"; cycle: number | null; error: unknown }
+  | { kind: "value"; cycle: number | null; value: R; provisional?: true }
+  | { kind: "error"; cycle: number | null; error: unknown; provisional?: true }
   | { kind: "reset"; reason: string };
 
 export interface EngineStats {
@@ -64,6 +66,7 @@ interface CacheEntry<S extends Record<string, unknown>> {
   last: EngineEvent<unknown>;
   visibility: Visibility; // the snapshot the subscribers' current value comes from
   listeners: Set<Listener>;
+  waiting: Set<Listener>; // got a provisional first value; owed an event after the next re-run
   transientTries: number;
 }
 
@@ -153,12 +156,18 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
       entry = await this.open(shared, def, structuredClone(args));
     const l = listener as Listener;
     entry.listeners.add(l);
-    deliver(l, entry.last);
+    // A first value is current only if nothing the engine has applied is missing from it: a fresh open whose replay
+    // dirtied it, or a joiner on an entry being re-run or waiting for one, gets it marked provisional (01a-4a I1).
+    if (this.registry.isDirty(entry.key) && entry.last.kind !== "reset") {
+      entry.waiting.add(l);
+      deliver(l, { ...entry.last, provisional: true });
+    } else deliver(l, entry.last);
     let done = false;
     return () => {
       if (done) return;
       done = true;
       entry.listeners.delete(l);
+      entry.waiting.delete(l);
       // Identity, not key: after a reset (or a re-key) the key may belong to another entry.
       if (entry.listeners.size === 0 && this.entries.get(entry.key) === entry) {
         this.entries.delete(entry.key);
@@ -189,6 +198,7 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
           last: { kind: "value", cycle: null, value: r.value },
           visibility,
           listeners: new Set(),
+          waiting: new Set(),
           transientTries: 0,
         };
         this.entries.set(key, entry);
@@ -392,6 +402,7 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
         }
       if (transient) throw new Error("a re-run failed transiently: the cycle is retried whole");
       const changed: CacheEntry<S>[] = [];
+      const settled: CacheEntry<S>[] = []; // re-run this cycle with provisional subscribers waiting
       for (const [lane, chunk] of chunks.entries())
         for (const [i, entry] of chunk.entries()) {
           const r = results[lane]?.[i];
@@ -409,6 +420,7 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
           }
           this.registry.register(entry.key, r.readSet, S, this.buffer);
           entry.visibility = S;
+          if (entry.waiting.size) settled.push(entry);
           const hash = r.ok ? stableHash(r.value) : `error:${String(r.error)}`;
           if (hash === entry.hash) {
             this.stats.uselessReruns++;
@@ -431,6 +443,19 @@ export class SubscriptionEngine<S extends Record<string, unknown>> {
           this.stats.pushes++;
           deliver(l, entry.last);
         }
+      // A waiting subscriber that the push above did not reach (the value did not change) still learns that its
+      // value is now current, with this cycle's id; one that it did reach is simply settled.
+      for (const entry of settled) {
+        const waiting = [...entry.waiting];
+        entry.waiting.clear();
+        if (changed.includes(entry)) continue;
+        for (const l of waiting) {
+          if (gen !== this.generation) return;
+          if (!entry.listeners.has(l)) continue;
+          this.stats.pushes++;
+          deliver(l, entry.last.kind === "reset" ? entry.last : { ...entry.last, cycle: id });
+        }
+      }
       for (const l of this.cycleListeners) deliver(l, id);
       this.cycleWaiters = this.cycleWaiters.filter((w) => {
         if (w.after >= id) return true;
