@@ -86,6 +86,10 @@ bun run check                    # Biome + typecheck + unit tests (no database)
 bun run test                     # everything, incl. integration and e2e against the test database
 ```
 
+CI (`.github/workflows/ci.yml`) runs the same two commands on every pull request and on `main`: `check`, and
+`test` against a Postgres 18.6 container with logical replication (a random password per run). Actions are
+pinned to a commit.
+
 Benches: `cd packages/drizzle-base && bun --preload ./test/support/env.ts load/<module>/<bench>.ts`. The old spike
 container (`drizzlebase-pg18`, :5477, db `spike`) belongs to `spikes/` only.
 
