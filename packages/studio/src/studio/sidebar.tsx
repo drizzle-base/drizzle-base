@@ -9,9 +9,10 @@ export interface SidebarProps {
   tables: TableInfo[];
   selected: string | null;
   onSelect(id: string): void;
+  dirty?: ReadonlySet<string>;
 }
 
-export function Sidebar({ tables, selected, onSelect }: SidebarProps) {
+export function Sidebar({ tables, selected, onSelect, dirty }: SidebarProps) {
   const schemas = useMemo(() => [...new Set(tables.map((t) => t.schema))].sort(), [tables]);
   const [schema, setSchema] = useState(() => (schemas.includes("public") ? "public" : (schemas[0] ?? "")));
   const [search, setSearch] = useState("");
@@ -58,12 +59,17 @@ export function Sidebar({ tables, selected, onSelect }: SidebarProps) {
                 type="button"
                 data-kind={t.kind}
                 aria-label={t.name}
+                data-dirty={dirty?.has(id) || undefined}
+                title={dirty?.has(id) ? "Unsaved changes" : undefined}
                 aria-current={id === selected ? "page" : undefined}
                 onClick={() => onSelect(id)}
                 className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted aria-[current=page]:bg-muted aria-[current=page]:font-medium"
               >
                 <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
                 <span className="truncate">{t.name}</span>
+                {dirty?.has(id) && (
+                  <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-edit-foreground" />
+                )}
                 <span className="ml-auto text-xs text-muted-foreground tabular-nums">
                   {formatCount(t.estimatedRows)}
                 </span>

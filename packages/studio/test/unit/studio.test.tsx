@@ -189,7 +189,11 @@ describe("<Studio>", () => {
     setup();
     await openTable("users");
     await screen.findByText("user1@example.com");
-    const headers = screen.getAllByRole("columnheader").map((h) => h.textContent ?? "");
+    // Data columns only: an editable table leads with the row-selection column, which has no text.
+    const headers = screen
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent ?? "")
+      .filter((h) => h !== "");
     expect(headers[0]?.startsWith("email")).toBe(true);
     expect(headers[1]?.startsWith("id")).toBe(true);
     expect(headers.some((h) => h.startsWith("name"))).toBe(false);
