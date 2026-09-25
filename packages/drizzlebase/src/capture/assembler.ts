@@ -13,6 +13,7 @@ interface Open {
 }
 
 const tableOf = (r: Pgoutput.MessageRelation) => `${r.schema}.${r.name}`;
+// The reader decodes xid and relation OID with readInt32; both are unsigned 32-bit in Postgres (`>>> 0`).
 const decoder = new TextDecoder();
 
 export class TxnAssembler {
@@ -23,7 +24,7 @@ export class TxnAssembler {
 	feed(msg: Pgoutput.Message): StreamEvent | null {
 		switch (msg.tag) {
 			case "begin":
-				this.open = { xid: msg.xid, commitLsn: msg.commitLsn ?? "", changes: [], wholeTables: new Set(), ddl: false };
+				this.open = { xid: msg.xid >>> 0, commitLsn: msg.commitLsn ?? "", changes: [], wholeTables: new Set(), ddl: false };
 				return null;
 			case "insert":
 				this.add(msg.relation, "insert", null, msg.new);
@@ -72,6 +73,6 @@ export class TxnAssembler {
 			return;
 		}
 		if (o.wholeTables.has(table)) return; // already table-level: its row images add nothing
-		o.changes.push({ table, relOid: rel.relationOid, op, old, new: next });
+		o.changes.push({ table, relOid: rel.relationOid >>> 0, op, old, new: next });
 	}
 }

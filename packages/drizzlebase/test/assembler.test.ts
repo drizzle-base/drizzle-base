@@ -93,6 +93,15 @@ describe("TxnAssembler", () => {
 		expect(out).toEqual([]);
 	});
 
+	test("xid and relation OID are unsigned 32-bit, even when the reader returned them signed", () => {
+		// The library reads both with readInt32: anything ≥ 2^31 (half of all xids after wraparound) comes back negative.
+		const signed = 0xb2d05e00 | 0;
+		const [ev] = run(new TxnAssembler(10), [begin(signed), { tag: "insert", relation: rel("t", "full", signed), new: { id: 1 } }, commit()]);
+		if (ev?.kind !== "txn") throw new Error("expected a txn");
+		expect(ev.txn.xid).toBe(3_000_000_000);
+		expect(ev.txn.changes[0]!.relOid).toBe(3_000_000_000);
+	});
+
 	test("a change outside begin/commit is a protocol error, not silently dropped", () => {
 		expect(() => new TxnAssembler(10).feed({ tag: "insert", relation: rel("x"), new: { id: 1 } })).toThrow(/outside a transaction/);
 	});

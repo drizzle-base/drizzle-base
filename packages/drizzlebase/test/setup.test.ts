@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { PgoutputCapture } from "../src/capture/pgoutput";
 import { checkCapture, ensureCapture } from "../src/capture/setup";
-import { withCaptureSchema } from "./db";
+import { pgConfig, withCaptureSchema } from "./db";
 
 describe("ensureCapture + checkCapture", () => {
 	test("a fresh schema passes after ensureCapture", async () => {
@@ -69,6 +70,28 @@ describe("ensureCapture + checkCapture", () => {
 			await ensureCapture(sql, n);
 			await sql.unsafe(`alter publication "${n.publication}" set (publish_via_partition_root = false)`);
 			expect((await checkCapture(sql, n)).join("\n")).toContain("publish_via_partition_root");
+		});
+	});
+
+	test("a publication that no longer publishes updates, deletes or truncates is named", async () => {
+		await withCaptureSchema(async (sql, n) => {
+			await ensureCapture(sql, n);
+			await sql.unsafe(`alter publication "${n.publication}" set (publish = 'insert')`);
+			const problems = (await checkCapture(sql, n)).join("\n");
+			for (const op of ["update", "delete", "truncate"]) expect(problems).toContain(`does not publish ${op}`);
+		});
+	});
+
+	test("names that Postgres would fold or that need quoting are refused before anything is created", async () => {
+		// The replication command sends publication_names unquoted: "Pub_x" is folded to pub_x, PG 18 skips the
+		// missing publication with a warning, and every change is lost while barriers still arrive.
+		await withCaptureSchema(async (sql, n) => {
+			const bad = { ...n, publication: `Pub_${n.publication}` };
+			await expect(ensureCapture(sql, bad)).rejects.toThrow(/invalid publication name/);
+			expect(() => new PgoutputCapture({ connection: pgConfig, names: bad })).toThrow(/invalid publication name/);
+			expect(() => new PgoutputCapture({ connection: pgConfig, names: { ...n, slot: "a'b" } })).toThrow(/invalid slot name/);
+			const [row] = await sql`select count(*)::int as c from pg_publication where pubname ilike ${bad.publication}`;
+			expect(row.c).toBe(0);
 		});
 	});
 });

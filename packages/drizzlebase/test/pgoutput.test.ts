@@ -203,6 +203,110 @@ describe("PgoutputCapture", () => {
 		});
 	});
 
+	test("start() rejects when the stream cannot start: missing slot, wrong password", async () => {
+		await withCaptureSchema(async (sql, n) => {
+			await ensureCapture(sql, n);
+			await sql`select pg_drop_replication_slot(${n.slot})`;
+			const within = <T,>(p: Promise<T>) => Promise.race([p, Bun.sleep(8_000).then(() => { throw new Error("start() still pending after 8 s"); })]);
+			const noop = { onEvent: () => {}, onError: () => {} };
+			await expect(within(new PgoutputCapture({ connection: pgConfig, names: n }).start(noop))).rejects.toThrow(/does not exist/);
+			await ensureCapture(sql, n);
+			await expect(within(new PgoutputCapture({ connection: { ...pgConfig, password: "wrong" }, names: n }).start(noop))).rejects.toThrow(/password/);
+		});
+	}, 30_000);
+
+	test("start() waits for a slot another consumer still holds, then streams", async () => {
+		await withCaptureSchema(async (sql, n) => {
+			await sql.unsafe(`create table "${n.schema}".t(id int primary key)`);
+			const a = collector();
+			const first = await started(sql, n, a);
+			const b = collector();
+			const second = new PgoutputCapture({ connection: pgConfig, names: n });
+			const pending = second.start(b.handlers);
+			await Bun.sleep(1_000);
+			await first.stop();
+			await pending;
+			try {
+				await sql.unsafe(`insert into "${n.schema}".t values (7)`);
+				await b.sync(sql, "after-handover");
+				expect(b.txns().flatMap((t) => t.changes).map((c) => c.new?.id)).toContain(7);
+			} finally {
+				await second.stop();
+			}
+		});
+	}, 30_000);
+
+	test("a server that goes silent without closing the connection surfaces onError", async () => {
+		// A black-holed network sends no FIN: without a liveness deadline the capture would wait forever.
+		await withCaptureSchema(async (sql, n) => {
+			await sql.unsafe(`alter system set wal_sender_timeout = '2s'`);
+			await sql`select pg_reload_conf()`;
+			await ensureCapture(sql, n);
+			const errors: Error[] = [];
+			const cap = new PgoutputCapture({ connection: pgConfig, names: n, livenessMs: 4_000 });
+			await cap.start({ onEvent: () => {}, onError: (e) => errors.push(e) });
+			const [{ pid }] = await sql`select active_pid as pid from pg_replication_slots where slot_name = ${n.slot}`;
+			const signal = (sig: string) => Bun.spawnSync(["docker", "exec", "drizzlebase-pg", "kill", `-${sig}`, String(pid)]);
+			try {
+				expect(signal("STOP").exitCode).toBe(0);
+				expect(Bun.spawnSync(["docker", "exec", "drizzlebase-pg", "ps", "-o", "stat=", "-p", String(pid)]).stdout.toString()).toContain("T");
+				for (let i = 0; i < 100 && !errors.length; i++) await Bun.sleep(100);
+				expect(errors.map((e) => e.message).join()).toMatch(/no message from the server/);
+			} finally {
+				signal("CONT");
+				await cap.stop();
+				await sql.unsafe(`alter system reset wal_sender_timeout`);
+				await sql`select pg_reload_conf()`;
+			}
+		});
+	}, 30_000);
+
+	test("an acknowledged barrier advances the slot past writes the publication does not carry", async () => {
+		await withCaptureSchema(async (sql, n) => {
+			await sql.unsafe(`create table public.dzb_foreign_${n.slot}(id int)`);
+			const c = collector();
+			const cap = await started(sql, n, c);
+			try {
+				await sql.unsafe(`insert into public.dzb_foreign_${n.slot} select g from generate_series(1, 20000) g`);
+				const [{ l: afterForeign }] = await sql`select pg_current_wal_lsn()::text as l`;
+				await c.sync(sql, "advance-by-barrier");
+				let ok = false;
+				for (let i = 0; i < 50 && !ok; i++) {
+					const [{ ok: moved }] = await sql`select confirmed_flush_lsn >= ${afterForeign}::pg_lsn as ok from pg_replication_slots where slot_name = ${n.slot}`;
+					ok = moved;
+					if (!ok) await Bun.sleep(100);
+				}
+				expect(ok).toBe(true);
+			} finally {
+				await cap.stop();
+				await sql.unsafe(`drop table public.dzb_foreign_${n.slot}`);
+			}
+		});
+	}, 30_000);
+
+	test("with only foreign writes, the periodic advance keeps the slot moving", async () => {
+		await withCaptureSchema(async (sql, n) => {
+			await sql.unsafe(`create table public.dzb_foreign_${n.slot}(id int)`);
+			await ensureCapture(sql, n);
+			const cap = new PgoutputCapture({ connection: pgConfig, names: n, advance: { sql, everyMs: 200 } });
+			await cap.start({ onEvent: () => {}, onError: () => {} });
+			try {
+				await sql.unsafe(`insert into public.dzb_foreign_${n.slot} select g from generate_series(1, 20000) g`);
+				const [{ l: afterForeign }] = await sql`select pg_current_wal_lsn()::text as l`;
+				let ok = false;
+				for (let i = 0; i < 50 && !ok; i++) {
+					await Bun.sleep(100);
+					const [{ ok: moved }] = await sql`select confirmed_flush_lsn >= ${afterForeign}::pg_lsn as ok from pg_replication_slots where slot_name = ${n.slot}`;
+					ok = moved;
+				}
+				expect(ok).toBe(true);
+			} finally {
+				await cap.stop();
+				await sql.unsafe(`drop table public.dzb_foreign_${n.slot}`);
+			}
+		});
+	}, 30_000);
+
 	test("a terminated walsender surfaces onError", async () => {
 		await withCaptureSchema(async (sql, n) => {
 			const c = collector();

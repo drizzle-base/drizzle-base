@@ -11,6 +11,16 @@ export interface CaptureNames {
 	schema: string;
 }
 
+// Slot and publication names travel UNQUOTED in the replication command (pg-logical-replication builds
+// `publication_names '<name>'`), where Postgres folds case: "Pub_x" becomes pub_x, PG 18 skips the missing
+// publication with only a warning, and every change is lost while barriers still arrive. Only names that
+// survive folding and need no quoting are accepted.
+const NAME = /^[a-z_][a-z0-9_]{0,62}$/;
+export function assertCaptureNames(n: CaptureNames): void {
+	if (!NAME.test(n.slot)) throw new Error(`invalid slot name ${JSON.stringify(n.slot)}: use lower case letters, digits and _`);
+	if (!NAME.test(n.publication)) throw new Error(`invalid publication name ${JSON.stringify(n.publication)}: use lower case letters, digits and _`);
+}
+
 const q = (id: string) => `"${id.replace(/"/g, '""')}"`;
 const lit = (s: string) => `'${s.replace(/'/g, "''")}'`;
 
@@ -23,6 +33,7 @@ begin
 end $$;`;
 
 export async function ensureCapture(sql: SQL, n: CaptureNames): Promise<void> {
+	assertCaptureNames(n);
 	const [pub] = await sql`select 1 as x from pg_publication where pubname = ${n.publication}`;
 	if (!pub)
 		await sql.unsafe(
@@ -53,15 +64,25 @@ export async function checkCapture(sql: SQL, n: CaptureNames): Promise<string[]>
 	const [{ wal_level }] = await sql`select current_setting('wal_level') as wal_level`;
 	if (wal_level !== "logical") problems.push(`wal_level is ${wal_level}, must be logical`);
 
-	const [slot] = await sql`select plugin from pg_replication_slots where slot_name = ${n.slot}`;
+	const [slot] = await sql`
+		select plugin, database, wal_status, invalidation_reason from pg_replication_slots where slot_name = ${n.slot}`;
 	if (!slot) problems.push(`replication slot ${n.slot} is missing`);
-	else if (slot.plugin !== "pgoutput") problems.push(`replication slot ${n.slot} uses ${slot.plugin}, must be pgoutput`);
+	else {
+		if (slot.plugin !== "pgoutput") problems.push(`replication slot ${n.slot} uses ${slot.plugin}, must be pgoutput`);
+		const [{ db }] = await sql`select current_database() as db`;
+		if (slot.database !== db) problems.push(`replication slot ${n.slot} belongs to database ${slot.database}, not ${db}`);
+		if (slot.wal_status === "lost" || slot.invalidation_reason)
+			problems.push(`replication slot ${n.slot} is invalidated (${slot.invalidation_reason ?? slot.wal_status}): changes were lost, recreate it`);
+	}
 
-	const [pub] = await sql`select pubviaroot, pubgencols from pg_publication where pubname = ${n.publication}`;
+	const [pub] = await sql`
+		select pubviaroot, pubgencols, pubinsert, pubupdate, pubdelete, pubtruncate from pg_publication where pubname = ${n.publication}`;
 	if (!pub) problems.push(`publication ${n.publication} is missing`);
 	else {
 		if (!pub.pubviaroot) problems.push(`publication ${n.publication} must set publish_via_partition_root = true`);
 		if (pub.pubgencols !== "s") problems.push(`publication ${n.publication} must set publish_generated_columns = stored`);
+		for (const op of ["insert", "update", "delete", "truncate"] as const)
+			if (!pub[`pub${op}`]) problems.push(`publication ${n.publication} does not publish ${op}`);
 		const [inSchema] = await sql`
 			select 1 as x from pg_publication_namespace pn join pg_namespace ns on ns.oid = pn.pnnspid
 			join pg_publication p on p.oid = pn.pnpubid where p.pubname = ${n.publication} and ns.nspname = ${n.schema}`;
