@@ -175,6 +175,24 @@ precision); images use the process-global `pg.types` parsers and the walsender's
 before 01b); barriers can be forged by any role (01a-3 matches on the LSN `emitBarrier` returns, not the id);
 the equivalence property checks keys, not image contents (P-M8).
 
+### DZB-01a-2 review (runtime; final reviewer 25 Sep 2026, verdict "not ready, with fixes" → fixed)
+
+Fixed, each with a test (red first, or red when the fix is removed): a mutation whose handler caught an error
+committed nothing but reported success (COMMIT on an aborted transaction answers with the tag ROLLBACK and no
+error) → `MutationAbortedError`; the catalog resolved names on the pool while the function held a connection
+(deadlock on a small pool, and a different search_path resolved a name to another table) → resolution on the
+function's own connection, cached by (search_path, name); `set_config()` and session advisory locks refused;
+SQL-running built-ins (`query_to_xml`, `table_to_xml`, …) and user-defined operators → OPAQUE; publication
+membership checked per scanned table (ONLY respected), not per family; a statement issued after the handler
+returned is refused (the client closes); concurrent `db.transaction()` blocks serialized, unique savepoint
+names; `SELECT … INTO` refused; the WAL position read on the pool after COMMIT; a real commit-time 40001
+(write skew) retried, with backoff. Found during implementation: Drizzle wraps driver errors in
+`DrizzleQueryError` (the SQLSTATE is on `cause`), so the retry never fired until the runtime walked the chain.
+**Deferred:** user casts and domain CHECK functions are not resolved (same class as user operators; 01b);
+a caught 40001 is reported as `MutationAbortedError`, not retried; `Catalog.clear()` is wired to DDL in 01a-3
+(P-M1); the parse cache evicts FIFO, not LRU (RB-B1); `runQuery` still takes three round trips for
+BEGIN/snapshot/COMMIT (`docs/BENCH.md`).
+
 ## 0. What and why
 
 drizzlebase gives an app written with **plain drizzle-orm** (schema in real columns, migrations by drizzle-kit,

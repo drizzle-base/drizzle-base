@@ -32,7 +32,7 @@ export function uniqueName(prefix: string): string {
 // A test that times out is abandoned without running its finally: its slot would stay behind and retain WAL
 // forever. Test objects carry the owning pid in their name; anything whose pid is gone is swept.
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
-async function sweepAbandoned(sql: SQL): Promise<void> {
+export async function sweepAbandoned(sql: SQL): Promise<void> {
 	const dead = (name: string) => { const pid = Number(name.split("_")[1]); return Number.isInteger(pid) && pid !== process.pid && !alive(pid); };
 	for (const r of await sql`select slot_name from pg_replication_slots where slot_name ~ '^slot_[0-9]+_' and not active`)
 		if (dead(r.slot_name)) await sql`select pg_drop_replication_slot(${r.slot_name})`;
