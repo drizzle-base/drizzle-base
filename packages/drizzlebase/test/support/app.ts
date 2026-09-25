@@ -12,27 +12,29 @@ export const APP_SCHEMA = "dzb_app";
 const app = pgSchema(APP_SCHEMA);
 
 export const users = app.table("users", {
-	id: uuid("id").primaryKey().default(sql`uuidv7()`),
-	name: text("name").notNull(),
-	age: integer("age"),
+  id: uuid("id").primaryKey().default(sql`uuidv7()`),
+  name: text("name").notNull(),
+  age: integer("age"),
 });
 export const posts = app.table("posts", {
-	id: uuid("id").primaryKey().default(sql`uuidv7()`),
-	authorId: uuid("author_id").notNull(),
-	title: text("title").notNull(),
-	published: boolean("published").notNull().default(false),
+  id: uuid("id").primaryKey().default(sql`uuidv7()`),
+  authorId: uuid("author_id").notNull(),
+  title: text("title").notNull(),
+  published: boolean("published").notNull().default(false),
 });
 export const comments = app.table("comments", {
-	id: uuid("id").primaryKey().default(sql`uuidv7()`),
-	postId: uuid("post_id").notNull(),
-	body: text("body").notNull(),
+  id: uuid("id").primaryKey().default(sql`uuidv7()`),
+  postId: uuid("post_id").notNull(),
+  body: text("body").notNull(),
 });
 export const usersRelations = relations(users, ({ many }) => ({ posts: many(posts) }));
 export const postsRelations = relations(posts, ({ one, many }) => ({
-	author: one(users, { fields: [posts.authorId], references: [users.id] }),
-	comments: many(comments),
+  author: one(users, { fields: [posts.authorId], references: [users.id] }),
+  comments: many(comments),
 }));
-export const commentsRelations = relations(comments, ({ one }) => ({ post: one(posts, { fields: [comments.postId], references: [posts.id] }) }));
+export const commentsRelations = relations(comments, ({ one }) => ({
+  post: one(posts, { fields: [comments.postId], references: [posts.id] }),
+}));
 export const schema = { users, posts, comments, usersRelations, postsRelations, commentsRelations };
 
 export const APP_DDL = `
@@ -55,16 +57,16 @@ create table public.dzb_outside(id int primary key);
 
 // Recreates dzb_app, then gives it its own publication + slot; both are dropped afterwards.
 export async function withApp(fn: (sql: SQL, names: CaptureNames) => Promise<void>): Promise<void> {
-	const sql = testSql(8);
-	const names: CaptureNames = { schema: APP_SCHEMA, publication: uniqueName("pub"), slot: uniqueName("slot") };
-	await sweepAbandoned(sql); // a killed run leaves its slot behind, retaining WAL
-	await sql.unsafe(APP_DDL);
-	await ensureCapture(sql, names);
-	try {
-		await fn(sql, names);
-	} finally {
-		await dropCapture(sql, names);
-		await sql.unsafe(`drop schema if exists ${APP_SCHEMA} cascade; drop table if exists public.dzb_outside`);
-		await sql.close();
-	}
+  const sql = testSql(8);
+  const names: CaptureNames = { schema: APP_SCHEMA, publication: uniqueName("pub"), slot: uniqueName("slot") };
+  await sweepAbandoned(sql); // a killed run leaves its slot behind, retaining WAL
+  await sql.unsafe(APP_DDL);
+  await ensureCapture(sql, names);
+  try {
+    await fn(sql, names);
+  } finally {
+    await dropCapture(sql, names);
+    await sql.unsafe(`drop schema if exists ${APP_SCHEMA} cascade; drop table if exists public.dzb_outside`);
+    await sql.close();
+  }
 }

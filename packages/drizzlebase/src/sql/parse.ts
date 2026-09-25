@@ -6,45 +6,55 @@ import { loadModule, parseSync } from "libpg-query";
 
 export type Node = Record<string, unknown>;
 export interface Parsed {
-	kind: "select" | "insert" | "update" | "delete";
-	stmt: Node;
+  kind: "select" | "insert" | "update" | "delete";
+  stmt: Node;
 }
 
 export class ForbiddenStatementError extends Error {
-	override name = "ForbiddenStatementError";
+  override name = "ForbiddenStatementError";
 }
 
-const KINDS: Record<string, Parsed["kind"]> = { SelectStmt: "select", InsertStmt: "insert", UpdateStmt: "update", DeleteStmt: "delete" };
+const KINDS: Record<string, Parsed["kind"]> = {
+  SelectStmt: "select",
+  InsertStmt: "insert",
+  UpdateStmt: "update",
+  DeleteStmt: "delete",
+};
 const CACHE_MAX = 5_000; // distinct texts; inArray() lengths and sql.raw make the set open-ended (RB-B1)
 const cache = new Map<string, Parsed>();
 let loaded: Promise<void> | null = null;
 
 export function loadParser(): Promise<void> {
-	loaded ??= loadModule();
-	return loaded;
+  loaded ??= loadModule();
+  return loaded;
 }
 
 export function parseStatement(sqlText: string): Parsed {
-	const hit = cache.get(sqlText);
-	if (hit) return hit;
-	let tree: { stmts?: { stmt: Node }[] };
-	try {
-		tree = parseSync(sqlText) as { stmts?: { stmt: Node }[] };
-	} catch (e) {
-		throw new ForbiddenStatementError(`unparseable SQL: ${e instanceof Error ? e.message : String(e)}`);
-	}
-	const stmts = tree.stmts ?? [];
-	if (stmts.length !== 1) throw new ForbiddenStatementError(`exactly one statement per call, got ${stmts.length}`);
-	const node = stmts[0]!.stmt;
-	const type = Object.keys(node)[0] ?? "";
-	const kind = KINDS[type];
-	if (!kind)
-		throw new ForbiddenStatementError(`${type} is not allowed in a function: only SELECT, INSERT, UPDATE and DELETE (drizzlebase owns transactions; DDL belongs to migrations)`);
-	const stmt = node[type] as Node;
-	// SELECT … INTO parses as a SelectStmt but creates a table: DDL through the back door.
-	if (kind === "select" && stmt.intoClause) throw new ForbiddenStatementError("SELECT INTO creates a table: not allowed in a function (DDL belongs to migrations)");
-	const parsed: Parsed = { kind, stmt };
-	if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string);
-	cache.set(sqlText, parsed);
-	return parsed;
+  const hit = cache.get(sqlText);
+  if (hit) return hit;
+  let tree: { stmts?: { stmt: Node }[] };
+  try {
+    tree = parseSync(sqlText) as { stmts?: { stmt: Node }[] };
+  } catch (e) {
+    throw new ForbiddenStatementError(`unparseable SQL: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  const stmts = tree.stmts ?? [];
+  if (stmts.length !== 1) throw new ForbiddenStatementError(`exactly one statement per call, got ${stmts.length}`);
+  const node = stmts[0]!.stmt;
+  const type = Object.keys(node)[0] ?? "";
+  const kind = KINDS[type];
+  if (!kind)
+    throw new ForbiddenStatementError(
+      `${type} is not allowed in a function: only SELECT, INSERT, UPDATE and DELETE (drizzlebase owns transactions; DDL belongs to migrations)`,
+    );
+  const stmt = node[type] as Node;
+  // SELECT … INTO parses as a SelectStmt but creates a table: DDL through the back door.
+  if (kind === "select" && stmt["intoClause"])
+    throw new ForbiddenStatementError(
+      "SELECT INTO creates a table: not allowed in a function (DDL belongs to migrations)",
+    );
+  const parsed: Parsed = { kind, stmt };
+  if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string);
+  cache.set(sqlText, parsed);
+  return parsed;
 }
