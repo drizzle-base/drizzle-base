@@ -1,3 +1,2 @@
 [test]
 preload = ["./test/env.ts"]
-timeout = 30000

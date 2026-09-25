@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "exports": { "./capture": "./src/capture/index.ts" },
-  "scripts": { "test": "bun test", "typecheck": "tsc -p tsconfig.json" },
+  "scripts": { "test": "bun test --timeout 30000", "typecheck": "tsc -p tsconfig.json" },
   "dependencies": { "pg": "8.23.0", "pg-logical-replication": "2.5.0" },
   "devDependencies": { "@types/pg": "^8.15.0", "bun-types": "^1.3.0", "typescript": "^5.9.0" }
 }
