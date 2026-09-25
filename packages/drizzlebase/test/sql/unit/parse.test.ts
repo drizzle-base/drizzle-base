@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { ForbiddenStatementError, loadParser, parseStatement } from "../src/sql/parse";
+import { ForbiddenStatementError, loadParser, parseStatement } from "../../../src/sql";
 
 beforeAll(loadParser);
 

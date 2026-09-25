@@ -1,7 +1,7 @@
 // Test connections. Tests create, truncate and drop objects: they must never reach a database that is not
 // named as a test database. The guard runs at import, before any connection exists.
 import { SQL } from "bun";
-import { type CaptureNames, dropCapture } from "../src/capture/setup";
+import { type CaptureNames, dropCapture } from "../../src/capture";
 
 export function assertTestDatabase(name: string): void {
 	if (!name.includes("test")) throw new Error(`refusing to run tests against database "${name}": its name must contain "test"`);

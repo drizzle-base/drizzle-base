@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 process.env.NODE_ENV = "test";
-const rootEnv = join(import.meta.dir, "..", "..", "..", ".env");
+const rootEnv = join(import.meta.dir, "..", "..", "..", "..", ".env");
 if (!process.env.POSTGRES_PASSWORD && existsSync(rootEnv)) {
 	for (const line of readFileSync(rootEnv, "utf8").split("\n")) {
 		const m = line.match(/^([A-Z_]+)=(.*)$/);

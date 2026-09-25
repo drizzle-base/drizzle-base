@@ -1,9 +1,9 @@
 // Commit → onEvent latency of PgoutputCapture: idle, then with one open transaction pinning the slot while
-// 400k-row noise is written (the case that made polling O(WAL)). Run: bun load/stream_latency.ts (from the
-// package dir, with the test database up). Prints JSON lines; copy them into docs/BENCH.md.
-import { dropCapture, ensureCapture } from "../src/capture/setup";
-import { PgoutputCapture } from "../src/capture/pgoutput";
-import { pgConfig, testSql, uniqueName } from "../test/db";
+// 400k-row noise is written (the case that made polling O(WAL)). Run: bun --preload ./test/support/env.ts
+// load/capture/stream_latency.ts (from the package dir, with the test database up). Prints JSON lines; copy them into docs/BENCH.md.
+import { dropCapture, ensureCapture } from "../../src/capture";
+import { PgoutputCapture } from "../../src/capture";
+import { pgConfig, testSql, uniqueName } from "../../test/support/db";
 
 const sql = testSql(4);
 const n = { schema: uniqueName("bench"), publication: uniqueName("pub"), slot: uniqueName("slot") };

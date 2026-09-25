@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { collectRefs } from "../src/readset/refs";
-import { loadParser, parseStatement } from "../src/sql/parse";
+import { collectRefs } from "../../../src/readset";
+import { loadParser, parseStatement } from "../../../src/sql";
 
 beforeAll(loadParser);
 const rels = (sqlText: string) => collectRefs(parseStatement(sqlText).stmt).relations.map((r) => (r.schema ? `${r.schema}.${r.name}` : r.name)).sort();

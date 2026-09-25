@@ -1,2 +1,2 @@
 [test]
-preload = ["./test/env.ts"]
+preload = ["./test/support/env.ts"]

@@ -5,8 +5,8 @@
 import type { SQL } from "bun";
 import { relations, sql } from "drizzle-orm";
 import { boolean, integer, pgSchema, text, uuid } from "drizzle-orm/pg-core";
-import { type CaptureNames, dropCapture, ensureCapture } from "../../src/capture/setup";
-import { sweepAbandoned, testSql, uniqueName } from "../db";
+import { type CaptureNames, dropCapture, ensureCapture } from "../../src/capture";
+import { sweepAbandoned, testSql, uniqueName } from "./db";
 
 export const APP_SCHEMA = "dzb_app";
 const app = pgSchema(APP_SCHEMA);

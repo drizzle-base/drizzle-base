@@ -1,13 +1,13 @@
 // The owner's question: what does Drizzle cost over raw Bun.sql, and what does drizzlebase's runtime add
 // (a reserved connection, BEGIN/snapshot/COMMIT, the parse gate, the read-set)? Sequential, one connection's
 // worth of work at a time, so the number is latency, not throughput. Run from the package dir:
-//   bun --preload ./test/env.ts load/drizzle_overhead.ts
+//   bun --preload ./test/support/env.ts load/runtime/drizzle_overhead.ts
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sql";
-import { functions } from "../src/runtime/functions";
-import { Runtime } from "../src/runtime/runtime";
-import { loadParser } from "../src/sql/parse";
-import { schema, users, withApp } from "../test/fixtures/app";
+import { functions } from "../../src/runtime";
+import { Runtime } from "../../src/runtime";
+import { loadParser } from "../../src/sql";
+import { schema, users, withApp } from "../../test/support/app";
 
 const N = Number(process.env.N ?? 3000);
 await loadParser();

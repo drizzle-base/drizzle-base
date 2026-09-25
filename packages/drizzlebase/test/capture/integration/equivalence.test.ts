@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 import type { SQL } from "bun";
-import { emitBarrier } from "../src/capture/barrier";
-import { PgoutputCapture } from "../src/capture/pgoutput";
-import { ensureCapture } from "../src/capture/setup";
-import type { CapturedTxn } from "../src/capture/types";
-import { pgConfig, withCaptureSchema } from "./db";
+import { emitBarrier } from "../../../src/capture";
+import { PgoutputCapture } from "../../../src/capture";
+import { ensureCapture } from "../../../src/capture";
+import type { CapturedTxn } from "../../../src/capture";
+import { pgConfig, withCaptureSchema } from "../../../test/support/db";
 
 const STEPS = Number(process.env.EQUIV_STEPS ?? 200);
 
