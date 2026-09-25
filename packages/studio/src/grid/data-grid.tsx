@@ -1,14 +1,32 @@
 import { type ColumnDef, tableFeatures, useTable } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useMemo, useRef } from "react";
-import type { CellValue, Page, Row, Sort, TableInfo } from "../contract";
-import { cellKey, formatCell, rowIdOf } from "../studio/format";
+import { X } from "lucide-react";
+import { type KeyboardEvent, useMemo, useRef, useState } from "react";
+import type { CellValue, Page, Row, RowKey, Sort, TableInfo } from "../contract";
+import type { TableDraft } from "../edit/draft";
+import { ExpandedEditor } from "../edit/expanded-editor";
+import { opensExpanded } from "../edit/values";
+import { cellKey, rowIdOf } from "../studio/format";
 import type { LaidOutColumn } from "../studio/prefs";
 import { type HeaderSortAction, sortPosition } from "../view";
+import { GridCell } from "./grid-cell";
 import { HeaderCell } from "./header-cell";
 
 const ROW_HEIGHT = 32;
+const LEAD_WIDTH = 36;
 const features = tableFeatures({});
+
+export interface GridEditing {
+  draft: TableDraft;
+  /** cellKey(rowId, column) of every conflicted cell. */
+  conflicts: ReadonlySet<string>;
+  selectedRows: ReadonlySet<string>;
+  onToggleRow(rowId: string): void;
+  onToggleAll(rowIds: string[]): void;
+  onEditExisting(rowId: string, key: RowKey, column: string, value: CellValue, original: CellValue): void;
+  onEditNew(id: string, column: string, value: CellValue | undefined): void;
+  onRemoveNew(id: string): void;
+}
 
 export interface DataGridProps {
   table: TableInfo;
@@ -19,24 +37,46 @@ export interface DataGridProps {
   sort: Sort[];
   onSort(column: string, action: HeaderSortAction): void;
   onResize(column: string, width: number, commit: boolean): void;
+  /** Absent: read-only. */
+  editing?: GridEditing;
 }
 
-export function DataGrid({ table, page, changed, columns, sort, onSort, onResize }: DataGridProps) {
-  const defs = useMemo<ColumnDef<typeof features, Row, unknown>[]>(
+interface DisplayRow {
+  id: string;
+  row: Row;
+  isNew: boolean;
+  key: RowKey | null;
+}
+
+interface CellRef {
+  rowId: string;
+  column: string;
+}
+
+export function DataGrid({ table, page, changed, columns, sort, onSort, onResize, editing }: DataGridProps) {
+  const inserts = editing?.draft.inserts;
+  const display = useMemo<DisplayRow[]>(
+    () => [
+      ...(inserts ?? []).map((n) => ({ id: n.id, row: n.values, isNew: true, key: null })),
+      ...page.rows.map((row, i) => ({
+        id: rowIdOf(table.primaryKey, row, i),
+        row,
+        isNew: false,
+        key: table.primaryKey.length > 0 ? Object.fromEntries(table.primaryKey.map((k) => [k, row[k] ?? null])) : null,
+      })),
+    ],
+    [inserts, page.rows, table.primaryKey],
+  );
+  const defs = useMemo<ColumnDef<typeof features, DisplayRow, unknown>[]>(
     () =>
       columns.map(({ column }) => ({
         id: column.name,
-        accessorFn: (r: Row) => r[column.name] ?? null,
+        accessorFn: (d: DisplayRow) => d.row[column.name] ?? null,
         header: column.name,
       })),
     [columns],
   );
-  const grid = useTable({
-    features,
-    columns: defs,
-    data: page.rows,
-    getRowId: (r, i) => rowIdOf(table.primaryKey, r, i),
-  });
+  const grid = useTable({ features, columns: defs, data: display, getRowId: (d) => d.id });
   const scrollRef = useRef<HTMLDivElement>(null);
   const rows = grid.getRowModel().rows;
   const virtual = useVirtualizer({
@@ -45,11 +85,54 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
     estimateSize: () => ROW_HEIGHT,
     overscan: 12,
   });
-  const width = columns.reduce((w, c) => w + c.width, 0);
+  const [selected, setSelected] = useState<CellRef | null>(null);
+  const [editingCell, setEditingCell] = useState<(CellRef & { expanded: boolean }) | null>(null);
+
+  const lead = editing ? LEAD_WIDTH : 0;
+  const width = lead + columns.reduce((w, c) => w + c.width, 0);
+  const byId = new Map(display.map((d) => [d.id, d]));
+  const existingIds = display.filter((d) => !d.isNew && d.key).map((d) => d.id);
+  const allSelected = existingIds.length > 0 && existingIds.every((id) => editing?.selectedRows.has(id));
+
+  const cellValue = (d: DisplayRow, column: string): CellValue | undefined => {
+    if (d.isNew) return Object.hasOwn(d.row, column) ? (d.row[column] ?? null) : undefined;
+    const pending = editing?.draft.updates[d.id]?.cells[column];
+    return pending ? pending.value : (d.row[column] ?? null);
+  };
+  const startEditing = (ref: CellRef) => {
+    const col = columns.find((c) => c.column.name === ref.column)?.column;
+    if (!editing || !col) return;
+    setSelected(ref);
+    setEditingCell({ ...ref, expanded: opensExpanded(col) });
+  };
+  const commit = (ref: CellRef, value: CellValue | undefined, move?: "next") => {
+    const d = byId.get(ref.rowId);
+    if (!editing || !d) return;
+    if (d.isNew) editing.onEditNew(d.id, ref.column, value);
+    else if (d.key && value !== undefined)
+      editing.onEditExisting(d.id, d.key, ref.column, value, d.row[ref.column] ?? null);
+    setEditingCell(null);
+    if (move === "next") {
+      const next = columns[columns.findIndex((c) => c.column.name === ref.column) + 1];
+      if (next) startEditing({ rowId: ref.rowId, column: next.column.name });
+    }
+  };
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (editingCell || !selected) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      startEditing(selected);
+    } else if (e.key === "Escape") setSelected(null);
+  };
 
   if (columns.length === 0) {
     return <p className="p-4 text-sm text-muted-foreground">All columns are hidden. Show some from Columns.</p>;
   }
+
+  const expandedRow = editingCell?.expanded ? byId.get(editingCell.rowId) : undefined;
+  const expandedCol = editingCell?.expanded
+    ? columns.find((c) => c.column.name === editingCell.column)?.column
+    : undefined;
 
   return (
     // biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot
@@ -58,7 +141,8 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
       role="grid"
       tabIndex={0}
       aria-rowcount={rows.length + 1}
-      aria-colcount={columns.length}
+      aria-colcount={columns.length + (editing ? 1 : 0)}
+      onKeyDown={onKeyDown}
       className="relative h-full overflow-auto font-mono text-[13px] outline-none"
     >
       {/* biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot */}
@@ -69,56 +153,113 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
         className="sticky top-0 z-10 flex border-b bg-background"
         style={{ width }}
       >
+        {editing && (
+          // biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot
+          <div
+            role="columnheader"
+            tabIndex={-1}
+            aria-colindex={1}
+            className="flex shrink-0 items-center justify-center border-r"
+            style={{ width: LEAD_WIDTH }}
+          >
+            <input
+              type="checkbox"
+              aria-label="Select all rows"
+              checked={allSelected}
+              onChange={() => editing.onToggleAll(existingIds)}
+            />
+          </div>
+        )}
         {columns.map((c, i) => (
           <HeaderCell
             key={c.column.name}
-            index={i}
+            index={i + (editing ? 1 : 0)}
             column={c.column}
             width={c.width}
             sorted={sortPosition(sort, c.column.name)}
             onSort={(action) => onSort(c.column.name, action)}
-            onResize={(w, commit) => onResize(c.column.name, w, commit)}
+            onResize={(w, done) => onResize(c.column.name, w, done)}
           />
         ))}
       </div>
       <div className="relative" style={{ height: virtual.getTotalSize(), width }}>
         {virtual.getVirtualItems().map((item) => {
-          const row = rows[item.index];
-          if (!row) return null;
+          const tr = rows[item.index];
+          if (!tr) return null;
+          const d = tr.original;
           return (
             // biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot
             <div
-              key={row.id}
+              key={d.id}
               role="row"
               tabIndex={-1}
               aria-rowindex={item.index + 2}
+              data-new={d.isNew || undefined}
               className="absolute left-0 flex border-b hover:bg-muted/60"
               style={{ height: ROW_HEIGHT, width, transform: `translateY(${item.start}px)` }}
             >
-              {row.getAllCells().map((cell, i) => {
-                const value = cell.getValue() as CellValue;
-                const isChanged = changed.has(cellKey(row.id, cell.column.id));
+              {editing && (
+                // biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot
+                <div
+                  role="gridcell"
+                  tabIndex={-1}
+                  aria-colindex={1}
+                  className="flex shrink-0 items-center justify-center border-r"
+                  style={{ width: LEAD_WIDTH }}
+                >
+                  {d.isNew ? (
+                    <button type="button" aria-label="Remove new row" onClick={() => editing.onRemoveNew(d.id)}>
+                      <X className="size-3.5" />
+                    </button>
+                  ) : d.key ? (
+                    <input
+                      type="checkbox"
+                      aria-label="Select row"
+                      checked={editing.selectedRows.has(d.id)}
+                      onChange={() => editing.onToggleRow(d.id)}
+                    />
+                  ) : null}
+                </div>
+              )}
+              {columns.map((laid, i) => {
+                const name = laid.column.name;
+                const ref = { rowId: d.id, column: name };
+                const k = cellKey(d.id, name);
+                const isChanged = changed.has(k);
                 return (
-                  // biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot
-                  <div
+                  <GridCell
                     // A changed cell remounts on each revision so its flash animation restarts.
-                    key={isChanged ? `${cell.id}:${page.revision}` : cell.id}
-                    role="gridcell"
-                    tabIndex={-1}
-                    aria-colindex={i + 1}
-                    data-null={value === null || undefined}
-                    data-changed={isChanged || undefined}
-                    className="flex shrink-0 items-center overflow-hidden border-r px-2 whitespace-nowrap data-changed:animate-cell-flash data-null:text-muted-foreground"
-                    style={{ width: columns[i]?.width }}
-                  >
-                    <span className="truncate">{formatCell(value)}</span>
-                  </div>
+                    key={isChanged ? `${k}:${page.revision}` : k}
+                    index={i + (editing ? 2 : 1)}
+                    column={laid.column}
+                    width={laid.width}
+                    value={cellValue(d, name)}
+                    isNew={d.isNew}
+                    pending={!d.isNew && Boolean(editing?.draft.updates[d.id]?.cells[name])}
+                    conflict={editing?.conflicts.has(k) ?? false}
+                    changed={isChanged}
+                    selected={selected?.rowId === d.id && selected.column === name}
+                    editing={editingCell?.rowId === d.id && editingCell.column === name && !editingCell.expanded}
+                    onSelect={() => setSelected(ref)}
+                    onStartEdit={() => startEditing(ref)}
+                    onCommit={(v, move) => commit(ref, v, move)}
+                    onCancel={() => setEditingCell(null)}
+                  />
                 );
               })}
             </div>
           );
         })}
       </div>
+      {editingCell && expandedRow && expandedCol && (
+        <ExpandedEditor
+          column={expandedCol}
+          value={cellValue(expandedRow, expandedCol.name)}
+          isNew={expandedRow.isNew}
+          onSave={(v) => commit(editingCell, v)}
+          onClose={() => setEditingCell(null)}
+        />
+      )}
     </div>
   );
 }
