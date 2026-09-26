@@ -5,13 +5,15 @@ import { type KeyboardEvent, useMemo, useRef, useState } from "react";
 import type { CellValue, Page, Row, RowKey, Sort, TableInfo } from "../contract";
 import type { TableDraft } from "../edit/draft";
 import { ExpandedEditor } from "../edit/expanded-editor";
-import { opensExpanded } from "../edit/values";
+import { opensExpanded, parseCellValue } from "../edit/values";
 import { cellKey, rowIdOf } from "../studio/format";
 import type { LaidOutColumn } from "../studio/prefs";
 import { type HeaderSortAction, sortPosition } from "../view";
+import { CellMenu } from "./cell-menu";
+import { browserClipboard, type ClipboardIO, valuesToTsv } from "./clipboard";
 import { GridCell } from "./grid-cell";
 import { HeaderCell } from "./header-cell";
-import { type CellRef, cellsInRect } from "./range";
+import { type CellRef, cellsInRect, parseTsv } from "./range";
 
 const ROW_HEIGHT = 32;
 const LEAD_WIDTH = 56;
@@ -42,6 +44,7 @@ export interface DataGridProps {
   onResize(column: string, width: number, commit: boolean): void;
   /** Absent: read-only. */
   editing?: GridEditing;
+  clipboard?: ClipboardIO;
 }
 
 interface DisplayRow {
@@ -51,7 +54,17 @@ interface DisplayRow {
   key: RowKey | null;
 }
 
-export function DataGrid({ table, page, changed, columns, sort, onSort, onResize, editing }: DataGridProps) {
+export function DataGrid({
+  table,
+  page,
+  changed,
+  columns,
+  sort,
+  onSort,
+  onResize,
+  editing,
+  clipboard = browserClipboard,
+}: DataGridProps) {
   const inserts = editing?.draft.inserts;
   const display = useMemo<DisplayRow[]>(
     () => [
@@ -85,6 +98,7 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
   });
   const [anchor, setAnchor] = useState<CellRef | null>(null);
   const [focus, setFocus] = useState<CellRef | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; rowId: string } | null>(null);
   // `original` is the row's value when editing began: a push while the editor is open must not become the
   // expected value, or a save would overwrite the other person's change instead of reporting a conflict.
   const [editingCell, setEditingCell] = useState<(CellRef & { expanded: boolean; original: CellValue }) | null>(null);
@@ -135,6 +149,61 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
       if (next) startEditing({ rowId: ref.rowId, column: next.column.name });
     }
   };
+  const cellOf = (ref: CellRef) => {
+    const col = columns.find((c) => c.column.name === ref.column)?.column;
+    const d = byId.get(ref.rowId);
+    return { col: col ?? columns[0]!.column, value: d ? cellValue(d, ref.column) : undefined };
+  };
+  const copy = () => {
+    if (!focus) return;
+    const cells = cellsInRect(anchor ?? focus, focus, rowIds, colNames);
+    void clipboard.write(valuesToTsv(cells, cellOf));
+  };
+  const applyTsv = (text: string, origin: CellRef): number => {
+    if (!editing) return 0;
+    const originR = rowIds.indexOf(origin.rowId);
+    const originC = colNames.indexOf(origin.column);
+    if (originR < 0 || originC < 0) return 0;
+    let applied = 0;
+    const parsed = parseTsv(text);
+    for (let r = 0; r < parsed.length; r++) {
+      const fields = parsed[r];
+      if (!fields) continue;
+      const rowId = rowIds[originR + r];
+      if (rowId === undefined) continue;
+      const d = byId.get(rowId);
+      if (!d) continue;
+      for (let c = 0; c < fields.length; c++) {
+        const colName = colNames[originC + c];
+        if (colName === undefined) continue;
+        const col = columns.find((x) => x.column.name === colName)?.column;
+        if (!col) continue;
+        const field = fields[c] ?? "";
+        let value: CellValue | undefined;
+        if (field === "") {
+          if (!(col.nullable || d.isNew)) continue;
+          value = null;
+        } else {
+          const result = parseCellValue(col, field);
+          if (!result.ok) continue;
+          value = result.value;
+        }
+        if (d.isNew) editing.onEditNew(d.id, colName, value);
+        else if (d.key && value !== undefined)
+          editing.onEditExisting(d.id, d.key, colName, value, d.row[colName] ?? null);
+        else continue;
+        applied += 1;
+      }
+    }
+    return applied;
+  };
+  const paste = () => {
+    if (!focus) return;
+    const origin = focus;
+    void clipboard.read().then((text) => {
+      applyTsv(text, origin);
+    });
+  };
   const onKeyDown = (e: KeyboardEvent) => {
     if (editingCell) return;
     const move = (dr: number, dc: number, extend: boolean) => {
@@ -161,6 +230,16 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
     if (e.key === "ArrowLeft") {
       e.preventDefault();
       move(0, -1, e.shiftKey);
+    }
+    if ((e.key === "c" || e.key === "C") && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      copy();
+      return;
+    }
+    if ((e.key === "v" || e.key === "V") && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      paste();
+      return;
     }
     if (e.key === "Enter") {
       if (!focus) return;
@@ -304,6 +383,11 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
                     onCommit={(v, move) => commit(ref, v, move)}
                     onCancel={() => setEditingCell(null)}
                     onExpand={() => setEditingCell((c) => (c ? { ...c, expanded: true } : c))}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      if (!range.has(k)) select(ref, false);
+                      setMenu({ x: e.clientX, y: e.clientY, rowId: ref.rowId });
+                    }}
                   />
                 );
               })}
@@ -318,6 +402,22 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
           isNew={expandedRow.isNew}
           onSave={(v) => commit(editingCell, v)}
           onClose={() => setEditingCell(null)}
+        />
+      )}
+      {menu && (
+        <CellMenu
+          x={menu.x}
+          y={menu.y}
+          onCopy={() => {
+            copy();
+            setMenu(null);
+          }}
+          onPaste={() => {
+            paste();
+            setMenu(null);
+          }}
+          onExpand={editing ? () => editing.onExpandRow(menu.rowId) : undefined}
+          onClose={() => setMenu(null)}
         />
       )}
     </div>

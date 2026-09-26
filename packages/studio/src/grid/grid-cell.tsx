@@ -1,3 +1,4 @@
+import type { MouseEvent } from "react";
 import type { CellValue, ColumnInfo } from "../contract";
 import { CellEditor } from "../edit/cell-editor";
 import { formatCell } from "../studio/format";
@@ -20,6 +21,7 @@ export interface GridCellProps {
   onCommit(value: CellValue, move?: "next"): void;
   onCancel(): void;
   onExpand(): void;
+  onContextMenu(e: MouseEvent): void;
 }
 
 export function GridCell(p: GridCellProps) {
@@ -40,6 +42,7 @@ export function GridCell(p: GridCellProps) {
       data-missing={missing || undefined}
       onClick={(e) => p.onSelect(e.shiftKey)}
       onDoubleClick={p.onStartEdit}
+      onContextMenu={p.onContextMenu}
       onKeyDown={(e) => {
         if (e.key === "Enter" && !p.editing) {
           e.preventDefault();
