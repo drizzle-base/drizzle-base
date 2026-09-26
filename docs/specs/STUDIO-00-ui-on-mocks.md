@@ -119,6 +119,8 @@ export interface StudioDataSource {
   timestamptz in UTC (`+00`, the data source runs with TimeZone=UTC), fractions without trailing zeros — whatever
   offset or form they were written in; comparisons are by instant. Text that is not a value of the column's kind
   is `invalid_value`. The conformance suite gains `conformance.events`.
+- 26 Sep 2026 (S5): `TableInfo.indexes` is required (`IndexInfo[]`: name, columns, unique, primary). A table with a
+  primary key lists that index (`{name}_pkey`); views and heaps have `[]`.
 
 **The mock** (`createMockDataSource(seed)`): in-memory tables seeded with a realistic dataset (users, posts,
 comments, an enum, a json column, a view, a table without a primary key, a few thousand rows); a

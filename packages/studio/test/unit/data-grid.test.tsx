@@ -15,6 +15,7 @@ const table: TableInfo = {
     col("label", "text", "varchar(255)"),
   ],
   primaryKey: ["id"],
+  indexes: [],
   estimatedRows: null,
 };
 const rows = Array.from({ length: 1000 }, (_, i) => ({ id: i + 1, label: i === 1 ? null : `row ${i + 1}` }));

@@ -38,11 +38,20 @@ export interface TableRef {
   name: string;
 }
 
+export interface IndexInfo {
+  name: string;
+  columns: string[];
+  unique: boolean;
+  primary: boolean;
+}
+
 export interface TableInfo extends TableRef {
   kind: "table" | "view";
   columns: ColumnInfo[];
   /** Empty for views and for tables without one: those are read-only. */
   primaryKey: string[];
+  /** Empty for views and heaps. A table with a primary key lists that index. */
+  indexes: IndexInfo[];
   estimatedRows: number | null;
 }
 

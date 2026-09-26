@@ -69,6 +69,14 @@ describe("demo dataset", () => {
     }
   });
 
+  test("a table with a primary key lists that index; a view and a heap do not", () => {
+    const d = demoDataset(1);
+    const users = d.tables.find((t) => t.info.name === "users")?.info;
+    expect(users?.indexes).toEqual([{ name: "users_pkey", columns: ["id"], unique: true, primary: true }]);
+    expect(d.tables.find((t) => t.info.name === "audit_log")?.info.indexes).toEqual([]);
+    expect(d.views[0]?.info.indexes).toEqual([]);
+  });
+
   test("the view derives its rows from its base tables", () => {
     const d = demoDataset(1);
     const rows = (id: string) => d.tables.find((t) => tableId(t.info) === id)?.rows ?? [];

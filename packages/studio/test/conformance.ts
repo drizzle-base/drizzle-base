@@ -99,6 +99,7 @@ export function describeConformance(name: string, makeBackend: () => Promise<Con
       const items = tables.find((t) => t.schema === "conformance" && t.name === "items");
       expect(items?.kind).toBe("table");
       expect(items?.primaryKey).toEqual(["id"]);
+      expect(items?.indexes).toEqual([{ name: "items_pkey", columns: ["id"], unique: true, primary: true }]);
       expect(items?.columns.find((c) => c.name === "id")).toMatchObject({ isPrimaryKey: true, hasDefault: true });
       expect(items?.columns.find((c) => c.name === "label")).toMatchObject({ kind: "text", nullable: false });
       expect(tables.find((t) => t.name === "items_view")).toMatchObject({ kind: "view", primaryKey: [] });

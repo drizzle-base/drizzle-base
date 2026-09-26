@@ -11,6 +11,7 @@ const table: TableInfo = {
   kind: "table",
   columns: [col("id", "integer", "integer", { isPrimaryKey: true, nullable: false }), col("label", "text", "text")],
   primaryKey: ["id"],
+  indexes: [],
   estimatedRows: 20,
 };
 const page: Page = {

@@ -36,13 +36,16 @@ export function mockTable(
   defaults: Record<string, MockDefault> = {},
 ): MockTable {
   const cols = columns.map((c) => ({ ...c, hasDefault: defaults[c.name] !== undefined }));
+  const primaryKey = cols.filter((c) => c.isPrimaryKey).map((c) => c.name);
   return {
     info: {
       schema,
       name,
       kind: "table",
       columns: cols,
-      primaryKey: cols.filter((c) => c.isPrimaryKey).map((c) => c.name),
+      primaryKey,
+      indexes:
+        primaryKey.length > 0 ? [{ name: `${name}_pkey`, columns: primaryKey, unique: true, primary: true }] : [],
       estimatedRows: rows.length,
     },
     rows,
@@ -58,6 +61,7 @@ export function mockView(schema: string, name: string, columns: ColumnInfo[], co
       kind: "view",
       columns: columns.map((c) => ({ ...c, isPrimaryKey: false, hasDefault: false })),
       primaryKey: [],
+      indexes: [],
       estimatedRows: null,
     },
     compute,
