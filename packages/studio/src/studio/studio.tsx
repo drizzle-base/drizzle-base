@@ -44,6 +44,7 @@ import { Pager } from "./pager";
 import { type ColumnLayout, createPrefs, EMPTY_LAYOUT, layoutColumns } from "./prefs";
 import { Sidebar } from "./sidebar";
 import { SortPanel } from "./sort-panel";
+import { StructurePanel } from "./structure";
 import { ThemeToggle } from "./theme";
 import { usePage } from "./use-page";
 import { useControllableView } from "./use-view";
@@ -286,6 +287,7 @@ export function Studio({
     setView({ ...view, ...patch }, { history });
 
   const laid = table ? layoutColumns(table.columns, layout) : null;
+  const structure = view.pane === "structure";
   const warnings = [
     ...notices,
     ...(resolved?.ignored ?? []),
@@ -294,7 +296,8 @@ export function Studio({
   const sizes = [...new Set([...PAGE_SIZES, view.limit])].sort((a, b) => a - b);
 
   let body: ReactNode;
-  if (error)
+  if (table && structure) body = <StructurePanel table={table} />;
+  else if (error)
     body = (
       <p role="alert" className="p-4 text-sm text-destructive">
         {error.message}
@@ -340,7 +343,31 @@ export function Studio({
             {table && table.primaryKey.length === 0 && (
               <span className="rounded border px-1.5 text-xs text-muted-foreground">read-only</span>
             )}
-            {table && laid && (
+            {table && (
+              <div className="flex items-center">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-pressed={view.pane === "data"}
+                  className="aria-pressed:bg-muted"
+                  onClick={() => change({ pane: "data" }, "push")}
+                >
+                  DATA
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-pressed={structure}
+                  className="aria-pressed:bg-muted"
+                  onClick={() => change({ pane: "structure" }, "push")}
+                >
+                  STRUCTURE
+                </Button>
+              </div>
+            )}
+            {table && laid && !structure && (
               <>
                 <Button
                   type="button"
@@ -397,7 +424,7 @@ export function Studio({
               </>
             )}
             <div className="ml-auto flex items-center gap-2">
-              {page && (
+              {page && !structure && (
                 <span
                   className="flex items-center gap-1.5 text-xs text-muted-foreground"
                   title={`revision ${page.revision}`}
@@ -406,12 +433,12 @@ export function Studio({
                   Live
                 </span>
               )}
-              {page && page.total === null && (
+              {page && page.total === null && !structure && (
                 <Button type="button" variant="ghost" size="xs" onClick={() => setCountedFor(filtersKey)}>
                   Count rows
                 </Button>
               )}
-              {table && (
+              {table && !structure && (
                 <select
                   aria-label="Rows per page"
                   className={SELECT}
@@ -425,7 +452,7 @@ export function Studio({
                   ))}
                 </select>
               )}
-              {page && (
+              {page && !structure && (
                 <Pager
                   offset={view.offset}
                   limit={view.limit}
@@ -435,7 +462,7 @@ export function Studio({
                   onOffsetChange={(offset) => change({ offset }, "replace")}
                 />
               )}
-              {table && (
+              {table && !structure && (
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     render={<Button type="button" variant="ghost" size="icon-sm" aria-label="Export" />}
@@ -498,7 +525,7 @@ export function Studio({
               <ThemeToggle />
             </div>
           </header>
-          {editable && (isDirty(draft) || saveError) && (
+          {editable && !structure && (isDirty(draft) || saveError) && (
             <EditBar
               changes={changeCount(draft)}
               missing={missing}
@@ -517,7 +544,7 @@ export function Studio({
               }}
             />
           )}
-          {table && filtersOpen && (
+          {table && filtersOpen && !structure && (
             <FilterBar
               table={table}
               applied={view.filters}
@@ -536,7 +563,7 @@ export function Studio({
           )}
           <div className="flex min-h-0 flex-1">
             <div className="min-w-0 flex-1">{body}</div>
-            {editable && panel && table && (
+            {editable && panel && table && !structure && (
               <RowPanel
                 table={table}
                 row={panelRow}
