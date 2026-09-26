@@ -86,4 +86,4 @@ bun run check && bun run test
 - Use the compose container, not a system Postgres. A cloud VM may ship an older one, and one capture test signals
   the walsender through `docker exec drizzlebase-pg`.
 - `bun run test` creates this checkout's test database the first time.
-- Numbers from this checkout on 26 Sep 2026: 232 tests (drizzle-base) + 261 (studio, 40 files) + 16 Playwright end-to-end tests.
+- Numbers from this checkout on 26 Sep 2026: 232 tests (drizzle-base) + 262 (studio, 40 files) + 16 Playwright end-to-end tests.
