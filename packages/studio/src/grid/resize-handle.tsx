@@ -1,4 +1,4 @@
-import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useRef } from "react";
 import { MIN_WIDTH } from "../studio/prefs";
 
 export interface ResizeHandleProps {
@@ -13,6 +13,16 @@ export interface ResizeHandleProps {
 const STEP = 16;
 
 export function ResizeHandle({ name, width, onResize, edge = "right" }: ResizeHandleProps) {
+  const moveRef = useRef<(ev: PointerEvent) => void>(() => {});
+  const upRef = useRef<(ev: PointerEvent) => void>(() => {});
+  // Listeners are on window so a drag can leave the handle; they must come off on unmount
+  // or a later move calls onResize of a dead column.
+  useEffect(() => {
+    return () => {
+      window.removeEventListener("pointermove", moveRef.current);
+      window.removeEventListener("pointerup", upRef.current);
+    };
+  }, []);
   const onPointerDown = (e: ReactPointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -25,6 +35,8 @@ export function ResizeHandle({ name, width, onResize, edge = "right" }: ResizeHa
       window.removeEventListener("pointerup", up);
       onResize(at(ev.clientX), true);
     };
+    moveRef.current = move;
+    upRef.current = up;
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   };

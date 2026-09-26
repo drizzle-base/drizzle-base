@@ -47,10 +47,11 @@ export interface FilterBarProps {
   table: TableInfo;
   applied: ViewFilter[];
   onApply(filters: ViewFilter[]): void;
+  onDraftChange?(filters: ViewFilter[]): void;
 }
 
 /** Filters are drafts until applied (Apply or Enter), as in Drizzle Studio: typing never queries. */
-export function FilterBar({ table, applied, onApply }: FilterBarProps) {
+export function FilterBar({ table, applied, onApply, onDraftChange }: FilterBarProps) {
   const id = useId();
   const appliedKey = JSON.stringify(applied);
   const [drafts, setDrafts] = useState<Draft[]>(() => draftsOf(table, applied));
@@ -71,11 +72,15 @@ export function FilterBar({ table, applied, onApply }: FilterBarProps) {
   const apply = () => {
     if (canApply) onApply(drafts.filter((d) => !isBlank(d)).map(plain));
   };
+  const commitDrafts = (next: Draft[]) => {
+    setDrafts(next);
+    onDraftChange?.(next.map(plain));
+  };
   const update = (key: number, patch: Partial<ViewFilter>) =>
-    setDrafts(drafts.map((d) => (d.key === key ? { ...d, ...patch } : d)));
+    commitDrafts(drafts.map((d) => (d.key === key ? { ...d, ...patch } : d)));
   const remove = (key: number) => {
     const rest = drafts.filter((d) => d.key !== key);
-    setDrafts(rest.length > 0 ? rest : [blank(table)]);
+    commitDrafts(rest.length > 0 ? rest : [blank(table)]);
   };
 
   return (
@@ -164,7 +169,7 @@ export function FilterBar({ table, applied, onApply }: FilterBarProps) {
         );
       })}
       <div className="flex items-center gap-1.5">
-        <Button type="button" variant="outline" size="sm" onClick={() => setDrafts([...drafts, blank(table)])}>
+        <Button type="button" variant="outline" size="sm" onClick={() => commitDrafts([...drafts, blank(table)])}>
           <Plus />
           Add filter
         </Button>
@@ -176,7 +181,7 @@ export function FilterBar({ table, applied, onApply }: FilterBarProps) {
           variant="link"
           size="sm"
           onClick={() => {
-            setDrafts([blank(table)]);
+            commitDrafts([blank(table)]);
             onApply([]);
           }}
         >

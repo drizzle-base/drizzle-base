@@ -6,7 +6,7 @@ import { EMPTY_VIEW, PAGE_SIZES, type StudioView, type ViewFilter } from "./view
 // A column name that is not a plain identifier is double-quoted, "" being a quote inside it. A filter keeps the
 // text the person typed; typing it happens against the column (request.ts).
 
-export const VIEW_PARAM_KEYS = ["v", "table", "where", "order", "limit", "offset"] as const;
+export const VIEW_PARAM_KEYS = ["v", "table", "where", "order", "limit", "offset", "pane"] as const;
 
 const VERSION = "1";
 const OP_TOKENS: Record<FilterOp, string> = {
@@ -111,6 +111,7 @@ export function encodeView(view: StudioView): string {
   if (view.sort.length > 0) p.set("order", view.sort.map((s) => `${quoteName(s.column)}.${s.dir}`).join(","));
   if (view.limit !== EMPTY_VIEW.limit) p.set("limit", String(view.limit));
   if (view.offset !== 0) p.set("offset", String(view.offset));
+  if (view.pane !== "data") p.set("pane", view.pane);
   return p.toString();
 }
 
@@ -132,6 +133,10 @@ export function decodeView(search: string): { view: StudioView; errors: string[]
   const sort = order ? parseOrder(order) : [];
   if (sort === null) errors.push(`order "${order}": not column.asc or column.desc, comma-separated`);
   const table = p.get("table");
+  const paneRaw = p.get("pane");
+  let pane: StudioView["pane"] = "data";
+  if (paneRaw === "structure") pane = "structure";
+  else if (paneRaw !== null && paneRaw !== "data") errors.push(`pane "${paneRaw}": not data or structure`);
   return {
     view: {
       table: table ? table : null,
@@ -139,6 +144,7 @@ export function decodeView(search: string): { view: StudioView; errors: string[]
       sort: sort ?? [],
       limit: parseCount(p.get("limit"), EMPTY_VIEW.limit, 1, MAX_LIMIT, "limit", errors),
       offset: parseCount(p.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER, "offset", errors),
+      pane,
     },
     errors,
   };

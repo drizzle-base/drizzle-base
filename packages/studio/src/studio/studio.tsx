@@ -1,4 +1,4 @@
-import { ArrowUpDown, Columns3, ListFilter, MoreHorizontal, Plus, Trash2 } from "lucide-react";
+import { ArrowUpDown, Columns3, ListFilter, MoreHorizontal, Plus, Trash2, Upload } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { type Row, type StudioDataSource, StudioDataSourceError, type TableInfo, tableId } from "../contract";
 import { CodeEditorContext, type CodeEditorMode } from "../edit/code-editor";
@@ -26,6 +26,7 @@ import { browserClipboard } from "../grid/clipboard";
 import { DataGrid, type GridEditing } from "../grid/data-grid";
 import { download, exportCsv, exportJson, exportSql, rowsToExport } from "../grid/export";
 import { toTsv } from "../grid/range";
+import { applyImport, ImportDialog } from "../import/dialog";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "../ui/dialog";
 import {
@@ -44,6 +45,7 @@ import { Pager } from "./pager";
 import { type ColumnLayout, createPrefs, EMPTY_LAYOUT, layoutColumns } from "./prefs";
 import { Sidebar } from "./sidebar";
 import { SortPanel } from "./sort-panel";
+import { StructurePanel } from "./structure";
 import { ThemeToggle } from "./theme";
 import { usePage } from "./use-page";
 import { useControllableView } from "./use-view";
@@ -93,6 +95,7 @@ export function Studio({
   const [saveErrors, setSaveErrors] = useState<Record<string, SaveError>>({});
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [panel, setPanel] = useState<{ table: string; rowId: string; held?: Row } | null>(null);
   const [panelWidth, setPanelWidth] = useState(380);
@@ -115,9 +118,17 @@ export function Studio({
   const table = tables?.find((t) => tableId(t) === view.table) ?? null;
   // Keyed by content: a controlled host may hand an equal but new view object on every render.
   const viewKey = JSON.stringify(view);
+  // Pane is UI-only: it must not resubscribe the page or clear the selection.
+  const pageKey = JSON.stringify({
+    table: view.table,
+    filters: view.filters,
+    sort: view.sort,
+    limit: view.limit,
+    offset: view.offset,
+  });
   const filtersKey = JSON.stringify([view.table, view.filters]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: viewKey stands for view's content
-  const base = useMemo(() => (table ? toPageRequest(view, table, false) : null), [table, viewKey]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pageKey stands for the page request
+  const base = useMemo(() => (table ? toPageRequest(view, table, false) : null), [table, pageKey]);
   // Count when nothing filters the rows (what applies, not what the view names) or when asked to.
   const withTotal = (base?.req.filters.length ?? 0) === 0 || countedFor === filtersKey;
   const resolved = useMemo(() => (base ? { ...base, req: { ...base.req, withTotal } } : null), [base, withTotal]);
@@ -146,14 +157,17 @@ export function Studio({
     setView({ ...view, offset }, { history: "replace" });
   }, [page, view, setView]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new view (table, page, filters) clears the selection
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new page (table, filters, sort, limit, offset) clears the selection
   useEffect(() => {
     setSelectedRows(new Set());
-  }, [viewKey]);
+  }, [pageKey]);
 
   useEffect(() => {
     setPanel((p) => (p && p.table !== view.table ? null : p));
   }, [view.table]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: close Import when the table changes
+  useEffect(() => setImportOpen(false), [view.table]);
 
   const editable = table !== null && table.kind === "table" && table.primaryKey.length > 0;
   const draftKey = view.table ?? "";
@@ -286,6 +300,7 @@ export function Studio({
     setView({ ...view, ...patch }, { history });
 
   const laid = table ? layoutColumns(table.columns, layout) : null;
+  const structure = view.pane === "structure";
   const warnings = [
     ...notices,
     ...(resolved?.ignored ?? []),
@@ -294,7 +309,8 @@ export function Studio({
   const sizes = [...new Set([...PAGE_SIZES, view.limit])].sort((a, b) => a - b);
 
   let body: ReactNode;
-  if (error)
+  if (table && structure) body = <StructurePanel table={table} />;
+  else if (error)
     body = (
       <p role="alert" className="p-4 text-sm text-destructive">
         {error.message}
@@ -340,7 +356,31 @@ export function Studio({
             {table && table.primaryKey.length === 0 && (
               <span className="rounded border px-1.5 text-xs text-muted-foreground">read-only</span>
             )}
-            {table && laid && (
+            {table && (
+              <div className="flex items-center">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-pressed={view.pane === "data"}
+                  className="aria-pressed:bg-muted"
+                  onClick={() => change({ pane: "data" }, "push")}
+                >
+                  DATA
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-pressed={structure}
+                  className="aria-pressed:bg-muted"
+                  onClick={() => change({ pane: "structure" }, "push")}
+                >
+                  STRUCTURE
+                </Button>
+              </div>
+            )}
+            {table && laid && !structure && (
               <>
                 <Button
                   type="button"
@@ -388,6 +428,12 @@ export function Studio({
                     Add row
                   </Button>
                 )}
+                {editable && (
+                  <Button type="button" variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+                    <Upload />
+                    Import
+                  </Button>
+                )}
                 {editable && doomed.length > 0 && (
                   <Button type="button" variant="destructive" size="sm" onClick={() => setConfirmDelete(true)}>
                     <Trash2 />
@@ -397,7 +443,7 @@ export function Studio({
               </>
             )}
             <div className="ml-auto flex items-center gap-2">
-              {page && (
+              {page && !structure && (
                 <span
                   className="flex items-center gap-1.5 text-xs text-muted-foreground"
                   title={`revision ${page.revision}`}
@@ -406,12 +452,12 @@ export function Studio({
                   Live
                 </span>
               )}
-              {page && page.total === null && (
+              {page && page.total === null && !structure && (
                 <Button type="button" variant="ghost" size="xs" onClick={() => setCountedFor(filtersKey)}>
                   Count rows
                 </Button>
               )}
-              {table && (
+              {table && !structure && (
                 <select
                   aria-label="Rows per page"
                   className={SELECT}
@@ -425,7 +471,7 @@ export function Studio({
                   ))}
                 </select>
               )}
-              {page && (
+              {page && !structure && (
                 <Pager
                   offset={view.offset}
                   limit={view.limit}
@@ -435,7 +481,7 @@ export function Studio({
                   onOffsetChange={(offset) => change({ offset }, "replace")}
                 />
               )}
-              {table && (
+              {table && !structure && (
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     render={<Button type="button" variant="ghost" size="icon-sm" aria-label="Export" />}
@@ -498,7 +544,7 @@ export function Studio({
               <ThemeToggle />
             </div>
           </header>
-          {editable && (isDirty(draft) || saveError) && (
+          {editable && !structure && (isDirty(draft) || saveError) && (
             <EditBar
               changes={changeCount(draft)}
               missing={missing}
@@ -517,11 +563,13 @@ export function Studio({
               }}
             />
           )}
-          {table && filtersOpen && (
+          {table && filtersOpen && !structure && (
+            // Leftovers seed the bar only when nothing is applied: the page request still uses view.filters.
             <FilterBar
               table={table}
-              applied={view.filters}
+              applied={view.filters.length > 0 ? view.filters : (prefs.filterDrafts(draftKey) ?? [])}
               onApply={(filters) => change({ filters, offset: 0 }, "push")}
+              onDraftChange={(filters) => prefs.setFilterDrafts(draftKey, filters)}
             />
           )}
           {warnings.length > 0 && (
@@ -536,7 +584,7 @@ export function Studio({
           )}
           <div className="flex min-h-0 flex-1">
             <div className="min-w-0 flex-1">{body}</div>
-            {editable && panel && table && (
+            {editable && panel && table && !structure && (
               <RowPanel
                 table={table}
                 row={panelRow}
@@ -553,6 +601,17 @@ export function Studio({
               />
             )}
           </div>
+          {table && importOpen && (
+            <ImportDialog
+              open={importOpen}
+              onOpenChange={setImportOpen}
+              table={table}
+              onApply={(rows) => {
+                if (!editable) return;
+                updateDraft(draftKey, (d) => applyImport(d, table.columns, rows).draft);
+              }}
+            />
+          )}
           <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
             <DialogContent>
               <DialogTitle>{`Delete ${doomed.length} ${doomed.length === 1 ? "row" : "rows"}?`}</DialogTitle>

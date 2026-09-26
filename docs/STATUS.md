@@ -36,7 +36,8 @@
 | 01a-4a | the wire protocol, the WebSocket server, `startDrizzleBase` with capture restart; provisional first values in the engine | plan `…01a-4a-server`, spec review block |
 | STUDIO-00 S1, S2, S3a | the studio UI on a mock data source: live read-only grid; filters, sort, columns, view in the URL; editing | `docs/specs/STUDIO-00-ui-on-mocks.md`, plans `…studio-00-*` |
 | STUDIO-00 S3b | date/time picker, Expand Row panel, CodeMirror on demand | plan `…studio-00-3b-editors`, PR #3 / #4 |
-| STUDIO-00 S4 | cell range, TSV clipboard, export of the selection or page, foreign-key preview and Open | plan `…studio-00-4-selection` |
+| STUDIO-00 S4 | cell range, TSV clipboard, export of the selection or page, foreign-key preview and Open | plan `…studio-00-4-selection`, PR #5 |
+| STUDIO-00 S5 | import as pending inserts, Structure pane, `StudioView.pane`, filter drafts, resize cleanup | plan `…studio-00-5-import-structure` |
 | Public repo + CI | github.com/drizzle-base/drizzle-base; `.github/workflows/ci.yml` runs `check` and `test` (Postgres 18.6 with logical replication, Playwright) | PR #1 |
 
 ## In progress
@@ -54,12 +55,11 @@ Nothing in flight. The next work is listed below.
    - An `upd` may carry `c`, the cycle that settled a held value.
    - The client's reconnect and liveness design comes from minivex: backoff with jitter, reset on the first frame,
      a ping with a deadline, a wake-up probe, a bounded outbox, and a frame validator.
-2. **STUDIO-00 S5:** import UI, structure tab, final review.
-3. **01a-4c: the demo** (`apps/demo`). An edit made in Drizzle Studio re-pushes a query with `with` in the browser,
+2. **01a-4c: the demo** (`apps/demo`). An edit made in Drizzle Studio re-pushes a query with `with` in the browser,
    proved by a Playwright test. This is the done-when of all of 01a.
-4. **01a-5: closing benches.** Wide-table write cost, an open transaction pinning xmin, and 1M-row regressions.
-5. **Studio adapter.** `createDrizzleBaseDataSource(client)` passing the studio's conformance suite; needs 01a-4b.
-6. **01b** row-level precision, **01c** joins, **01d** pages and visibility. Each must lower the useless re-run
+3. **01a-5: closing benches.** Wide-table write cost, an open transaction pinning xmin, and 1M-row regressions.
+4. **Studio adapter.** `createDrizzleBaseDataSource(client)` passing the studio's conformance suite; needs 01a-4b.
+5. **01b** row-level precision, **01c** joins, **01d** pages and visibility. Each must lower the useless re-run
    ratio (0.999 at 1 000 subscriptions today; see `docs/BENCH.md`).
 
 ## Open for the owner
@@ -86,4 +86,4 @@ bun run check && bun run test
 - Use the compose container, not a system Postgres. A cloud VM may ship an older one, and one capture test signals
   the walsender through `docker exec drizzlebase-pg`.
 - `bun run test` creates this checkout's test database the first time.
-- Numbers from this checkout on 26 Sep 2026: 232 tests (drizzle-base) + 242 (studio, 36 files) + 15 Playwright end-to-end tests.
+- Numbers from this checkout on 26 Sep 2026: 232 tests (drizzle-base) + 262 (studio, 40 files) + 16 Playwright end-to-end tests.

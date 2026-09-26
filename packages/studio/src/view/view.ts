@@ -14,6 +14,7 @@ export interface StudioView {
   sort: Sort[];
   limit: number;
   offset: number;
+  pane: "data" | "structure";
 }
 
 /** How a host should record a change: a new history entry, or in place of the current one. */
@@ -23,7 +24,14 @@ export interface ViewChange {
 
 export const DEFAULT_LIMIT = 50;
 export const PAGE_SIZES = [50, 100, 500, 1000] as const;
-export const EMPTY_VIEW: StudioView = { table: null, filters: [], sort: [], limit: DEFAULT_LIMIT, offset: 0 };
+export const EMPTY_VIEW: StudioView = {
+  table: null,
+  filters: [],
+  sort: [],
+  limit: DEFAULT_LIMIT,
+  offset: 0,
+  pane: "data",
+};
 
 export function viewOfTable(table: string, limit: number = DEFAULT_LIMIT): StudioView {
   return { ...EMPTY_VIEW, table, limit };

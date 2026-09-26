@@ -131,6 +131,7 @@ describe("the date/time picker in the Expand Row panel", () => {
     name: "t",
     kind: "table",
     primaryKey: ["id"],
+    indexes: [],
     estimatedRows: 1,
     columns: [
       col("id", "integer", "int", { isPrimaryKey: true, nullable: false }),

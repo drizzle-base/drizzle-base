@@ -119,6 +119,8 @@ export interface StudioDataSource {
   timestamptz in UTC (`+00`, the data source runs with TimeZone=UTC), fractions without trailing zeros — whatever
   offset or form they were written in; comparisons are by instant. Text that is not a value of the column's kind
   is `invalid_value`. The conformance suite gains `conformance.events`.
+- 26 Sep 2026 (S5): `TableInfo.indexes` is required (`IndexInfo[]`: name, columns, unique, primary). A table with a
+  primary key lists that index (`{name}_pkey`); views and heaps have `[]`.
 
 **The mock** (`createMockDataSource(seed)`): in-memory tables seeded with a realistic dataset (users, posts,
 comments, an enum, a json column, a view, a table without a primary key, a few thousand rows); a
@@ -181,7 +183,7 @@ NULL/DEFAULT, bytea, json and arrays in an expanded editor), add and delete rows
   `parseScalar`; a saved new row that is off this page stays in the panel from the inserted key; a pick in the
   panel updates the field text so blur cannot undo it. Minors recorded (CodeMirror `json()` on arrays; e2e day
   matcher). S4 (`docs/superpowers/plans/2026-09-25-studio-00-4-selection.md`): cell range, TSV clipboard, export of the
-  selection or page, foreign-key preview and Open. Next: S5 import UI, structure tab, final review.
+  selection or page, foreign-key preview and Open. S5 (`docs/superpowers/plans/2026-09-26-studio-00-5-import-structure.md`): import as pending inserts, Structure pane, `StudioView.pane`, filter drafts, resize cleanup. Next: STUDIO-00 closed; core is 01a-4b then the adapter.
 
 ## 6. What happens later (not this session)
 

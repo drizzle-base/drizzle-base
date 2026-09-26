@@ -26,6 +26,16 @@ describe("encodeView", () => {
     expect(encodeView(view({ table: "public.t" }))).toBe("v=1&table=public.t");
     expect(encodeView(EMPTY_VIEW)).toBe("");
   });
+  test("pane=structure round-trips; a missing pane is data; a bad pane is skipped", () => {
+    const v = view({ table: "public.users", pane: "structure" });
+    expect(decodeURIComponent(encodeView(v))).toContain("pane=structure");
+    expect(decodeView(`?${encodeView(v)}`)).toEqual({ view: v, errors: [] });
+    expect(decodeView("?v=1&table=public.users").view.pane).toBe("data");
+    expect(encodeView(view({ table: "public.t" }))).toBe("v=1&table=public.t");
+    const bad = decodeView("?v=1&table=t&pane=schema");
+    expect(bad.view.pane).toBe("data");
+    expect(bad.errors).toEqual(['pane "schema": not data or structure']);
+  });
 });
 
 describe("round trip", () => {
