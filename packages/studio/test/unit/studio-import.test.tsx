@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { EMPTY_VIEW, Studio } from "../../src";
+import { useState } from "react";
+import { EMPTY_VIEW, Studio, type StudioView } from "../../src";
 import { EMPTY_DRAFT } from "../../src/edit/draft";
 import { exportSql } from "../../src/grid/export";
 import { applyImport } from "../../src/import/dialog";
@@ -47,6 +48,29 @@ test("a read-only table has no Import button", async () => {
   fireEvent.click(screen.getByRole("button", { name: "audit_log" }));
   await screen.findByText("read-only");
   expect(screen.queryByRole("button", { name: "Import" })).toBeNull();
+});
+
+test("Import closes when the table changes and applies nothing to a read-only table", async () => {
+  const ds = createMockDataSource({ dataset: demoDataset(1), log: createMemoryLog() });
+  let setHostView: (view: StudioView) => void = () => {};
+  function Host() {
+    const [view, setView] = useState<StudioView>({ ...EMPTY_VIEW, table: "public.users" });
+    setHostView = setView;
+    return <Studio dataSource={ds} view={view} onViewChange={setView} codeEditor="textarea" />;
+  }
+  render(<Host />);
+  await screen.findByText("User 1");
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  expect(screen.getByRole("dialog")).toBeTruthy();
+  fireEvent.change(within(screen.getByRole("dialog")).getByRole("textbox"), {
+    target: { value: JSON.stringify([{ name: "ImportedAcross", email: "across@x.com" }]) },
+  });
+  // A pointer click on the inert sidebar also dismisses the modal; drive the same table change a host/URL would.
+  act(() => setHostView({ ...EMPTY_VIEW, table: "public.audit_log" }));
+  expect(screen.getByRole("button", { name: "audit_log", hidden: true }).getAttribute("aria-current")).toBe("page");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Import" })).toBeNull();
+  expect(screen.queryByText("ImportedAcross")).toBeNull();
 });
 
 test("SQL that names another table is refused and adds nothing", async () => {

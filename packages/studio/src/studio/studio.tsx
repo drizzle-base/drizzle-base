@@ -166,6 +166,9 @@ export function Studio({
     setPanel((p) => (p && p.table !== view.table ? null : p));
   }, [view.table]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: close Import when the table changes
+  useEffect(() => setImportOpen(false), [view.table]);
+
   const editable = table !== null && table.kind === "table" && table.primaryKey.length > 0;
   const draftKey = view.table ?? "";
   const draft = drafts[draftKey] ?? EMPTY_DRAFT;
@@ -598,12 +601,15 @@ export function Studio({
               />
             )}
           </div>
-          {table && (
+          {table && importOpen && (
             <ImportDialog
               open={importOpen}
               onOpenChange={setImportOpen}
               table={table}
-              onApply={(rows) => updateDraft(draftKey, (d) => applyImport(d, table.columns, rows).draft)}
+              onApply={(rows) => {
+                if (!editable) return;
+                updateDraft(draftKey, (d) => applyImport(d, table.columns, rows).draft);
+              }}
             />
           )}
           <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
