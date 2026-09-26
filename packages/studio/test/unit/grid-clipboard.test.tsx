@@ -12,6 +12,34 @@ const users = demoDataset(1).tables[0]?.info as TableInfo;
 const rows = (demoDataset(1).tables[0]?.rows ?? []).slice(0, 5);
 const page: Page = { rows, total: 5, hasMore: false, revision: 1 };
 
+type Fiber = { memoizedProps?: Record<string, unknown>; return?: Fiber };
+
+function fiberOf(node: object): Fiber | undefined {
+  const key = Object.keys(node).find((k) => k.startsWith("__reactFiber$"));
+  return key ? (node as Record<string, Fiber>)[key] : undefined;
+}
+
+function resolveAnchor(raw: unknown): { getBoundingClientRect(): DOMRect } {
+  let value = raw;
+  if (typeof value === "function") value = (value as () => unknown)();
+  if (value && typeof value === "object" && "current" in value) value = (value as { current: unknown }).current;
+  if (value && typeof value === "object" && "getBoundingClientRect" in value) {
+    return value as { getBoundingClientRect(): DOMRect };
+  }
+  throw new Error("Positioner anchor is not a virtual element");
+}
+
+/** happy-dom has no layout; the virtual element's rect is the wiring that can be sabotaged. */
+function positionerAnchorRect(menu: HTMLElement): DOMRect {
+  let fiber = fiberOf(menu);
+  while (fiber) {
+    const raw = fiber.memoizedProps?.["anchor"];
+    if (raw != null) return resolveAnchor(raw).getBoundingClientRect();
+    fiber = fiber.return;
+  }
+  throw new Error("Positioner has no anchor");
+}
+
 function memory(): ClipboardIO & { text: string } {
   const io = { text: "" };
   return {
@@ -110,6 +138,22 @@ describe("clipboard", () => {
       await Promise.resolve();
     });
     expect(clip.text).toBe("User 1");
+  });
+
+  test("the context menu is anchored at the pointer", async () => {
+    const clip = memory();
+    render(<Harness clip={clip} />);
+    const name = screen.getByText("User 1").closest("[role=gridcell]") as HTMLElement;
+    fireEvent.contextMenu(name, { clientX: 240, clientY: 160 });
+    await act(() => Promise.resolve());
+    const menu = screen.getByRole("menu");
+    const rect = positionerAnchorRect(menu);
+    expect(rect.x).toBe(240);
+    expect(rect.y).toBe(160);
+    expect(rect.left).toBe(240);
+    expect(rect.top).toBe(160);
+    expect(rect.right).toBe(240);
+    expect(rect.bottom).toBe(160);
   });
 
   test("copy writes wire text for a boolean, not TRUE", async () => {
