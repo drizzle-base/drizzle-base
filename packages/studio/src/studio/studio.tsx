@@ -1,4 +1,4 @@
-import { ArrowUpDown, Columns3, ListFilter, MoreHorizontal, Plus, Trash2 } from "lucide-react";
+import { ArrowUpDown, Columns3, ListFilter, MoreHorizontal, Plus, Trash2, Upload } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { type Row, type StudioDataSource, StudioDataSourceError, type TableInfo, tableId } from "../contract";
 import { CodeEditorContext, type CodeEditorMode } from "../edit/code-editor";
@@ -26,6 +26,7 @@ import { browserClipboard } from "../grid/clipboard";
 import { DataGrid, type GridEditing } from "../grid/data-grid";
 import { download, exportCsv, exportJson, exportSql, rowsToExport } from "../grid/export";
 import { toTsv } from "../grid/range";
+import { applyImport, ImportDialog } from "../import/dialog";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "../ui/dialog";
 import {
@@ -94,6 +95,7 @@ export function Studio({
   const [saveErrors, setSaveErrors] = useState<Record<string, SaveError>>({});
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [panel, setPanel] = useState<{ table: string; rowId: string; held?: Row } | null>(null);
   const [panelWidth, setPanelWidth] = useState(380);
@@ -423,6 +425,12 @@ export function Studio({
                     Add row
                   </Button>
                 )}
+                {editable && (
+                  <Button type="button" variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+                    <Upload />
+                    Import
+                  </Button>
+                )}
                 {editable && doomed.length > 0 && (
                   <Button type="button" variant="destructive" size="sm" onClick={() => setConfirmDelete(true)}>
                     <Trash2 />
@@ -588,6 +596,14 @@ export function Studio({
               />
             )}
           </div>
+          {table && (
+            <ImportDialog
+              open={importOpen}
+              onOpenChange={setImportOpen}
+              table={table}
+              onApply={(rows) => updateDraft(draftKey, (d) => applyImport(d, table.columns, rows).draft)}
+            />
+          )}
           <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
             <DialogContent>
               <DialogTitle>{`Delete ${doomed.length} ${doomed.length === 1 ? "row" : "rows"}?`}</DialogTitle>
