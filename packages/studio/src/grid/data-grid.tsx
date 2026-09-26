@@ -11,6 +11,7 @@ import type { LaidOutColumn } from "../studio/prefs";
 import { type HeaderSortAction, sortPosition } from "../view";
 import { GridCell } from "./grid-cell";
 import { HeaderCell } from "./header-cell";
+import { type CellRef, cellsInRect } from "./range";
 
 const ROW_HEIGHT = 32;
 const LEAD_WIDTH = 56;
@@ -50,11 +51,6 @@ interface DisplayRow {
   key: RowKey | null;
 }
 
-interface CellRef {
-  rowId: string;
-  column: string;
-}
-
 export function DataGrid({ table, page, changed, columns, sort, onSort, onResize, editing }: DataGridProps) {
   const inserts = editing?.draft.inserts;
   const display = useMemo<DisplayRow[]>(
@@ -87,7 +83,8 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
     estimateSize: () => ROW_HEIGHT,
     overscan: 12,
   });
-  const [selected, setSelected] = useState<CellRef | null>(null);
+  const [anchor, setAnchor] = useState<CellRef | null>(null);
+  const [focus, setFocus] = useState<CellRef | null>(null);
   // `original` is the row's value when editing began: a push while the editor is open must not become the
   // expected value, or a save would overwrite the other person's change instead of reporting a conflict.
   const [editingCell, setEditingCell] = useState<(CellRef & { expanded: boolean; original: CellValue }) | null>(null);
@@ -97,17 +94,29 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
   const byId = new Map(display.map((d) => [d.id, d]));
   const existingIds = display.filter((d) => !d.isNew && d.key).map((d) => d.id);
   const allSelected = existingIds.length > 0 && existingIds.every((id) => editing?.selectedRows.has(id));
+  const rowIds = display.map((d) => d.id);
+  const colNames = columns.map((c) => c.column.name);
+  const range =
+    anchor && focus
+      ? new Set(cellsInRect(anchor, focus, rowIds, colNames).map((c) => cellKey(c.rowId, c.column)))
+      : new Set<string>();
 
   const cellValue = (d: DisplayRow, column: string): CellValue | undefined => {
     if (d.isNew) return Object.hasOwn(d.row, column) ? (d.row[column] ?? null) : undefined;
     const pending = editing?.draft.updates[d.id]?.cells[column];
     return pending ? pending.value : (d.row[column] ?? null);
   };
+  const select = (ref: CellRef, extend: boolean) => {
+    setFocus(ref);
+    setAnchor((a) => (extend && a ? a : ref));
+    editing?.onFocusRow(ref.rowId);
+  };
   const startEditing = (ref: CellRef) => {
     const col = columns.find((c) => c.column.name === ref.column)?.column;
     if (!editing || !col) return;
     const d = byId.get(ref.rowId);
-    setSelected(ref);
+    setAnchor(ref);
+    setFocus(ref);
     setEditingCell({ ...ref, expanded: opensExpanded(col), original: d?.row[ref.column] ?? null });
     editing.onFocusRow(ref.rowId);
   };
@@ -127,11 +136,40 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
     }
   };
   const onKeyDown = (e: KeyboardEvent) => {
-    if (editingCell || !selected) return;
-    if (e.key === "Enter") {
+    if (editingCell) return;
+    const move = (dr: number, dc: number, extend: boolean) => {
+      if (!focus) return;
+      const r = rowIds.indexOf(focus.rowId);
+      const c = colNames.indexOf(focus.column);
+      const nr = Math.max(0, Math.min(rowIds.length - 1, r + dr));
+      const nc = Math.max(0, Math.min(colNames.length - 1, c + dc));
+      const next = { rowId: rowIds[nr] ?? focus.rowId, column: colNames[nc] ?? focus.column };
+      select(next, extend);
+    };
+    if (e.key === "ArrowDown") {
       e.preventDefault();
-      startEditing(selected);
-    } else if (e.key === "Escape") setSelected(null);
+      move(1, 0, e.shiftKey);
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      move(-1, 0, e.shiftKey);
+    }
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      move(0, 1, e.shiftKey);
+    }
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      move(0, -1, e.shiftKey);
+    }
+    if (e.key === "Enter") {
+      if (!focus) return;
+      e.preventDefault();
+      startEditing(focus);
+    } else if (e.key === "Escape") {
+      setAnchor(null);
+      setFocus(null);
+    }
   };
 
   if (columns.length === 0) {
@@ -258,12 +296,10 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
                     pending={!d.isNew && Boolean(editing?.draft.updates[d.id]?.cells[name])}
                     conflict={editing?.conflicts.has(k) ?? false}
                     changed={isChanged}
-                    selected={selected?.rowId === d.id && selected.column === name}
+                    selected={focus?.rowId === d.id && focus.column === name}
+                    inRange={range.has(k)}
                     editing={editingCell?.rowId === d.id && editingCell.column === name && !editingCell.expanded}
-                    onSelect={() => {
-                      setSelected(ref);
-                      editing?.onFocusRow(ref.rowId);
-                    }}
+                    onSelect={(extend) => select(ref, extend)}
                     onStartEdit={() => startEditing(ref)}
                     onCommit={(v, move) => commit(ref, v, move)}
                     onCancel={() => setEditingCell(null)}

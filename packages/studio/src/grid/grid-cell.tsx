@@ -13,8 +13,9 @@ export interface GridCellProps {
   conflict: boolean;
   changed: boolean;
   selected: boolean;
+  inRange: boolean;
   editing: boolean;
-  onSelect(): void;
+  onSelect(extend: boolean): void;
   onStartEdit(): void;
   onCommit(value: CellValue, move?: "next"): void;
   onCancel(): void;
@@ -31,12 +32,13 @@ export function GridCell(p: GridCellProps) {
       tabIndex={-1}
       aria-colindex={p.index}
       aria-selected={p.selected || undefined}
+      data-range={p.inRange || undefined}
       data-null={p.value === null || p.value === undefined || undefined}
       data-changed={p.changed || undefined}
       data-pending={p.pending || (p.isNew && p.value !== undefined) || undefined}
       data-conflict={p.conflict || undefined}
       data-missing={missing || undefined}
-      onClick={p.onSelect}
+      onClick={(e) => p.onSelect(e.shiftKey)}
       onDoubleClick={p.onStartEdit}
       onKeyDown={(e) => {
         if (e.key === "Enter" && !p.editing) {
@@ -44,7 +46,7 @@ export function GridCell(p: GridCellProps) {
           p.onStartEdit();
         }
       }}
-      className="relative flex shrink-0 items-center border-r px-2 whitespace-nowrap data-changed:animate-cell-flash data-null:text-muted-foreground data-pending:bg-edit data-pending:text-edit-foreground aria-selected:outline-2 aria-selected:-outline-offset-2 aria-selected:outline-ring data-conflict:ring-2 data-conflict:ring-destructive data-conflict:ring-inset data-missing:ring-1 data-missing:ring-destructive data-missing:ring-inset"
+      className="relative flex shrink-0 items-center border-r px-2 whitespace-nowrap data-changed:animate-cell-flash data-null:text-muted-foreground data-pending:bg-edit data-pending:text-edit-foreground data-range:bg-primary/10 aria-selected:outline-2 aria-selected:-outline-offset-2 aria-selected:outline-ring data-conflict:ring-2 data-conflict:ring-destructive data-conflict:ring-inset data-missing:ring-1 data-missing:ring-destructive data-missing:ring-inset"
       style={{ width: p.width }}
     >
       {p.editing ? (
