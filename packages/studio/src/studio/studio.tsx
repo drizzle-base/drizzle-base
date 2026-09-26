@@ -1,4 +1,4 @@
-import { ArrowUpDown, Columns3, ListFilter, Plus, Trash2 } from "lucide-react";
+import { ArrowUpDown, Columns3, ListFilter, MoreHorizontal, Plus, Trash2 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { type Row, type StudioDataSource, StudioDataSourceError, type TableInfo, tableId } from "../contract";
 import { CodeEditorContext, type CodeEditorMode } from "../edit/code-editor";
@@ -21,9 +21,20 @@ import {
 } from "../edit/draft";
 import { EditBar, type SaveError } from "../edit/edit-bar";
 import { RowPanel } from "../edit/row-panel";
+import { textForEditing } from "../edit/values";
+import { browserClipboard } from "../grid/clipboard";
 import { DataGrid, type GridEditing } from "../grid/data-grid";
+import { download, exportCsv, exportJson, exportSql, rowsToExport } from "../grid/export";
+import { toTsv } from "../grid/range";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "../ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { applyHeaderSort, PAGE_SIZES, type StudioView, toPageRequest, type ViewChange, viewOfTable } from "../view";
 import { ColumnsPanel } from "./columns-panel";
@@ -302,6 +313,12 @@ export function Studio({
           setLayout({ ...layout, widths: { ...layout.widths, [column]: width } }, commit)
         }
         editing={gridEditing}
+        dataSource={dataSource}
+        tables={tables ?? undefined}
+        onOpenRelation={(next) => {
+          setFiltersOpen(true);
+          change({ table: next.table, filters: next.filters, sort: [], offset: 0 }, "push");
+        }}
       />
     );
   else if (table) body = <p className="p-4 text-sm text-muted-foreground">Loading…</p>;
@@ -417,6 +434,66 @@ export function Studio({
                   hasMore={page.hasMore}
                   onOffsetChange={(offset) => change({ offset }, "replace")}
                 />
+              )}
+              {table && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={<Button type="button" variant="ghost" size="icon-sm" aria-label="Export" />}
+                  >
+                    <MoreHorizontal />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      onClick={() => {
+                        const rows = rowsToExport(selectedRows, pageRows);
+                        void browserClipboard.write(
+                          toTsv([
+                            table.columns.map((c) => c.name),
+                            ...rows.map((row) =>
+                              table.columns.map((c) => (row[c.name] == null ? "" : textForEditing(c, row[c.name]!))),
+                            ),
+                          ]),
+                        );
+                      }}
+                    >
+                      Copy
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() =>
+                        download(
+                          `${table.name}.json`,
+                          exportJson(table.columns, rowsToExport(selectedRows, pageRows)),
+                          "application/json",
+                        )
+                      }
+                    >
+                      JSON
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() =>
+                        download(
+                          `${table.name}.csv`,
+                          exportCsv(table.columns, rowsToExport(selectedRows, pageRows)),
+                          "text/csv",
+                        )
+                      }
+                    >
+                      CSV
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() =>
+                        download(
+                          `${table.name}.sql`,
+                          exportSql(table, table.columns, rowsToExport(selectedRows, pageRows)),
+                          "text/plain",
+                        )
+                      }
+                    >
+                      SQL
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
               <ThemeToggle />
             </div>

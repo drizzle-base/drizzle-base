@@ -180,7 +180,8 @@ NULL/DEFAULT, bytea, json and arrays in an expanded editor), add and delete rows
   review (25 Sep 2026): no Critical; Important fixed — years 0–99 no longer fold to 1900–1999 in the calendar or
   `parseScalar`; a saved new row that is off this page stays in the panel from the inserted key; a pick in the
   panel updates the field text so blur cannot undo it. Minors recorded (CodeMirror `json()` on arrays; e2e day
-  matcher). Next: S4 selection, clipboard, export, foreign keys; S5 import UI, structure tab, final review.
+  matcher). S4 (`docs/superpowers/plans/2026-09-25-studio-00-4-selection.md`): cell range, TSV clipboard, export of the
+  selection or page, foreign-key preview and Open. Next: S5 import UI, structure tab, final review.
 
 ## 6. What happens later (not this session)
 

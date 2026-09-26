@@ -2,19 +2,42 @@ import { type ColumnDef, tableFeatures, useTable } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Maximize2, X } from "lucide-react";
 import { type KeyboardEvent, useMemo, useRef, useState } from "react";
-import type { CellValue, Page, Row, RowKey, Sort, TableInfo } from "../contract";
+import {
+  type CellValue,
+  type Page,
+  type Row,
+  type RowKey,
+  type Sort,
+  type StudioDataSource,
+  type TableInfo,
+  tableId,
+} from "../contract";
 import type { TableDraft } from "../edit/draft";
 import { ExpandedEditor } from "../edit/expanded-editor";
-import { opensExpanded } from "../edit/values";
+import { opensExpanded, parseCellValue } from "../edit/values";
 import { cellKey, rowIdOf } from "../studio/format";
 import type { LaidOutColumn } from "../studio/prefs";
-import { type HeaderSortAction, sortPosition } from "../view";
+import { type Relation, relationsOf } from "../studio/relations";
+import { type HeaderSortAction, type StudioView, sortPosition } from "../view";
+import { CellMenu } from "./cell-menu";
+import { browserClipboard, type ClipboardIO, valuesToTsv } from "./clipboard";
+import { download, exportCsv, exportJson, exportSql, rowsToExport } from "./export";
+import { FkPreview } from "./fk-preview";
 import { GridCell } from "./grid-cell";
 import { HeaderCell } from "./header-cell";
+import { type CellRef, cellsInRect, parseTsv } from "./range";
 
 const ROW_HEIGHT = 32;
 const LEAD_WIDTH = 56;
+const REVERSE_WIDTH = 140;
+const EXPAND_EXTRA = 160;
 const features = tableFeatures({});
+
+function wireText(value: CellValue): string {
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (Array.isArray(value)) return JSON.stringify(value);
+  return String(value);
+}
 
 export interface GridEditing {
   draft: TableDraft;
@@ -41,6 +64,10 @@ export interface DataGridProps {
   onResize(column: string, width: number, commit: boolean): void;
   /** Absent: read-only. */
   editing?: GridEditing;
+  clipboard?: ClipboardIO;
+  tables?: TableInfo[];
+  dataSource?: StudioDataSource;
+  onOpenRelation?(view: Pick<StudioView, "table" | "filters">): void;
 }
 
 interface DisplayRow {
@@ -50,12 +77,20 @@ interface DisplayRow {
   key: RowKey | null;
 }
 
-interface CellRef {
-  rowId: string;
-  column: string;
-}
-
-export function DataGrid({ table, page, changed, columns, sort, onSort, onResize, editing }: DataGridProps) {
+export function DataGrid({
+  table,
+  page,
+  changed,
+  columns,
+  sort,
+  onSort,
+  onResize,
+  editing,
+  clipboard = browserClipboard,
+  tables,
+  dataSource,
+  onOpenRelation,
+}: DataGridProps) {
   const inserts = editing?.draft.inserts;
   const display = useMemo<DisplayRow[]>(
     () => [
@@ -81,33 +116,72 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
   const grid = useTable({ features, columns: defs, data: display, getRowId: (d) => d.id });
   const scrollRef = useRef<HTMLDivElement>(null);
   const rows = grid.getRowModel().rows;
+  const relations = useMemo(() => relationsOf(table, tables ?? [table]), [table, tables]);
+  const reverseRels = useMemo(() => relations.filter((r) => r.kind === "reverse"), [relations]);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const relKey = (rowId: string, rel: Relation) => cellKey(rowId, rel.kind === "forward" ? rel.local : rel.name);
+  const expandedFor = (rowId: string) => relations.filter((r) => expanded.has(relKey(rowId, r)));
   const virtual = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: (index) => {
+      const d = display[index];
+      return d && expandedFor(d.id).length > 0 ? ROW_HEIGHT + EXPAND_EXTRA : ROW_HEIGHT;
+    },
+    measureElement: (el) => el.getBoundingClientRect().height,
     overscan: 12,
   });
-  const [selected, setSelected] = useState<CellRef | null>(null);
+  const [anchor, setAnchor] = useState<CellRef | null>(null);
+  const [focus, setFocus] = useState<CellRef | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; rowId: string } | null>(null);
   // `original` is the row's value when editing began: a push while the editor is open must not become the
   // expected value, or a save would overwrite the other person's change instead of reporting a conflict.
   const [editingCell, setEditingCell] = useState<(CellRef & { expanded: boolean; original: CellValue }) | null>(null);
 
   const lead = editing ? LEAD_WIDTH : 0;
-  const width = lead + columns.reduce((w, c) => w + c.width, 0);
+  const width = lead + columns.reduce((w, c) => w + c.width, 0) + reverseRels.length * REVERSE_WIDTH;
   const byId = new Map(display.map((d) => [d.id, d]));
   const existingIds = display.filter((d) => !d.isNew && d.key).map((d) => d.id);
   const allSelected = existingIds.length > 0 && existingIds.every((id) => editing?.selectedRows.has(id));
+  const rowIds = display.map((d) => d.id);
+  const colNames = columns.map((c) => c.column.name);
+  const range =
+    anchor && focus
+      ? new Set(cellsInRect(anchor, focus, rowIds, colNames).map((c) => cellKey(c.rowId, c.column)))
+      : new Set<string>();
 
   const cellValue = (d: DisplayRow, column: string): CellValue | undefined => {
     if (d.isNew) return Object.hasOwn(d.row, column) ? (d.row[column] ?? null) : undefined;
     const pending = editing?.draft.updates[d.id]?.cells[column];
     return pending ? pending.value : (d.row[column] ?? null);
   };
+  const toggleRel = (rowId: string, rel: Relation) => {
+    const k = relKey(rowId, rel);
+    setExpanded((s) => {
+      const next = new Set(s);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  };
+  const openRelation = (rel: Relation, value: CellValue | undefined) => {
+    const text = value === undefined || value === null ? "" : wireText(value);
+    onOpenRelation?.({
+      table: tableId(rel.table),
+      filters: [{ column: rel.column, op: "eq", text }],
+    });
+  };
+  const select = (ref: CellRef, extend: boolean) => {
+    setFocus(ref);
+    setAnchor((a) => (extend && a ? a : ref));
+    editing?.onFocusRow(ref.rowId);
+  };
   const startEditing = (ref: CellRef) => {
     const col = columns.find((c) => c.column.name === ref.column)?.column;
     if (!editing || !col) return;
     const d = byId.get(ref.rowId);
-    setSelected(ref);
+    setAnchor(ref);
+    setFocus(ref);
     setEditingCell({ ...ref, expanded: opensExpanded(col), original: d?.row[ref.column] ?? null });
     editing.onFocusRow(ref.rowId);
   };
@@ -126,12 +200,125 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
       if (next) startEditing({ rowId: ref.rowId, column: next.column.name });
     }
   };
+  const cellOf = (ref: CellRef) => {
+    const col = columns.find((c) => c.column.name === ref.column)?.column;
+    const d = byId.get(ref.rowId);
+    return { col: col ?? columns[0]!.column, value: d ? cellValue(d, ref.column) : undefined };
+  };
+  const copy = () => {
+    if (!focus) return;
+    const cells = cellsInRect(anchor ?? focus, focus, rowIds, colNames);
+    void clipboard.write(valuesToTsv(cells, cellOf));
+  };
+  const applyTsv = (text: string, origin: CellRef): number => {
+    if (!editing) return 0;
+    const originR = rowIds.indexOf(origin.rowId);
+    const originC = colNames.indexOf(origin.column);
+    if (originR < 0 || originC < 0) return 0;
+    let applied = 0;
+    const parsed = parseTsv(text);
+    for (let r = 0; r < parsed.length; r++) {
+      const fields = parsed[r];
+      if (!fields) continue;
+      const rowId = rowIds[originR + r];
+      if (rowId === undefined) continue;
+      const d = byId.get(rowId);
+      if (!d) continue;
+      for (let c = 0; c < fields.length; c++) {
+        const colName = colNames[originC + c];
+        if (colName === undefined) continue;
+        const col = columns.find((x) => x.column.name === colName)?.column;
+        if (!col) continue;
+        const field = fields[c] ?? "";
+        let value: CellValue | undefined;
+        if (field === "") {
+          if (!(col.nullable || d.isNew)) continue;
+          value = null;
+        } else {
+          const result = parseCellValue(col, field);
+          if (!result.ok) continue;
+          value = result.value;
+        }
+        if (d.isNew) editing.onEditNew(d.id, colName, value);
+        else if (d.key && value !== undefined)
+          editing.onEditExisting(d.id, d.key, colName, value, d.row[colName] ?? null);
+        else continue;
+        applied += 1;
+      }
+    }
+    return applied;
+  };
+  const paste = () => {
+    if (!focus) return;
+    const origin = focus;
+    void clipboard.read().then((text) => {
+      applyTsv(text, origin);
+    });
+  };
+  const exportRows = (kind: "json" | "csv" | "sql") => {
+    const cells = anchor && focus ? cellsInRect(anchor, focus, rowIds, colNames) : [];
+    const rangeIds: string[] = [];
+    for (const c of cells) {
+      if (!rangeIds.includes(c.rowId)) rangeIds.push(c.rowId);
+    }
+    const pageForExport = display.filter((d) => !d.isNew).map((d) => ({ id: d.id, row: d.row }));
+    const rows =
+      rangeIds.length > 0
+        ? rangeIds.flatMap((id) => {
+            const d = byId.get(id);
+            return d ? [d.row] : [];
+          })
+        : rowsToExport(editing?.selectedRows ?? new Set(), pageForExport);
+    const cols = table.columns;
+    if (kind === "json") download(`${table.name}.json`, exportJson(cols, rows), "application/json");
+    else if (kind === "csv") download(`${table.name}.csv`, exportCsv(cols, rows), "text/csv");
+    else download(`${table.name}.sql`, exportSql(table, cols, rows), "text/plain");
+  };
   const onKeyDown = (e: KeyboardEvent) => {
-    if (editingCell || !selected) return;
-    if (e.key === "Enter") {
+    if (editingCell) return;
+    const move = (dr: number, dc: number, extend: boolean) => {
+      if (!focus) return;
+      const r = rowIds.indexOf(focus.rowId);
+      const c = colNames.indexOf(focus.column);
+      const nr = Math.max(0, Math.min(rowIds.length - 1, r + dr));
+      const nc = Math.max(0, Math.min(colNames.length - 1, c + dc));
+      const next = { rowId: rowIds[nr] ?? focus.rowId, column: colNames[nc] ?? focus.column };
+      select(next, extend);
+    };
+    if (e.key === "ArrowDown") {
       e.preventDefault();
-      startEditing(selected);
-    } else if (e.key === "Escape") setSelected(null);
+      move(1, 0, e.shiftKey);
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      move(-1, 0, e.shiftKey);
+    }
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      move(0, 1, e.shiftKey);
+    }
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      move(0, -1, e.shiftKey);
+    }
+    if ((e.key === "c" || e.key === "C") && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      copy();
+      return;
+    }
+    if ((e.key === "v" || e.key === "V") && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      paste();
+      return;
+    }
+    if (e.key === "Enter") {
+      if (!focus) return;
+      e.preventDefault();
+      startEditing(focus);
+    } else if (e.key === "Escape") {
+      setAnchor(null);
+      setFocus(null);
+    }
   };
 
   if (columns.length === 0) {
@@ -150,7 +337,7 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
       role="grid"
       tabIndex={0}
       aria-rowcount={rows.length + 1}
-      aria-colcount={columns.length + (editing ? 1 : 0)}
+      aria-colcount={columns.length + reverseRels.length + (editing ? 1 : 0)}
       onKeyDown={onKeyDown}
       className="relative h-full overflow-auto font-mono text-[13px] outline-none"
     >
@@ -190,84 +377,155 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
             onResize={(w, done) => onResize(c.column.name, w, done)}
           />
         ))}
+        {reverseRels.map((rel, i) => (
+          // biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot
+          <div
+            key={rel.name}
+            role="columnheader"
+            tabIndex={-1}
+            aria-colindex={columns.length + (editing ? 1 : 0) + i + 1}
+            className="relative flex h-8 shrink-0 items-center border-r px-2"
+            style={{ width: REVERSE_WIDTH }}
+          >
+            <span className="truncate font-semibold">{rel.name}</span>
+          </div>
+        ))}
       </div>
       <div className="relative" style={{ height: virtual.getTotalSize(), width }}>
         {virtual.getVirtualItems().map((item) => {
           const tr = rows[item.index];
           if (!tr) return null;
           const d = tr.original;
+          const openRels = expandedFor(d.id);
           return (
             // biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot
             <div
               key={d.id}
+              ref={virtual.measureElement}
+              data-index={item.index}
               role="row"
               tabIndex={-1}
               aria-rowindex={item.index + 2}
               data-new={d.isNew || undefined}
-              className="absolute left-0 flex border-b hover:bg-muted/60"
-              style={{ height: ROW_HEIGHT, width, transform: `translateY(${item.start}px)` }}
+              className="absolute left-0 border-b hover:bg-muted/60"
+              style={{
+                position: "absolute",
+                left: 0,
+                transform: `translateY(${item.start}px)`,
+                width,
+                minHeight: ROW_HEIGHT,
+              }}
             >
-              {editing && (
-                // biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot
-                <div
-                  role="gridcell"
-                  tabIndex={-1}
-                  aria-colindex={1}
-                  className="flex shrink-0 items-center justify-center gap-1.5 border-r"
-                  style={{ width: LEAD_WIDTH }}
-                >
-                  {d.isNew ? (
-                    <button type="button" aria-label="Remove new row" onClick={() => editing.onRemoveNew(d.id)}>
-                      <X className="size-3.5" />
-                    </button>
-                  ) : d.key ? (
-                    <input
-                      type="checkbox"
-                      aria-label="Select row"
-                      checked={editing.selectedRows.has(d.id)}
-                      onChange={() => editing.onToggleRow(d.id)}
-                    />
-                  ) : null}
-                  <button
-                    type="button"
-                    aria-label="Expand row"
-                    title="Expand row"
-                    onClick={() => editing.onExpandRow(d.id)}
-                    className="text-muted-foreground hover:text-foreground"
+              <div className="flex" style={{ height: ROW_HEIGHT, width }}>
+                {editing && (
+                  // biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot
+                  <div
+                    role="gridcell"
+                    tabIndex={-1}
+                    aria-colindex={1}
+                    className="flex shrink-0 items-center justify-center gap-1.5 border-r"
+                    style={{ width: LEAD_WIDTH }}
                   >
-                    <Maximize2 className="size-3.5" />
-                  </button>
-                </div>
-              )}
-              {columns.map((laid, i) => {
-                const name = laid.column.name;
-                const ref = { rowId: d.id, column: name };
-                const k = cellKey(d.id, name);
-                const isChanged = changed.has(k);
-                const isEditing = editingCell?.rowId === d.id && editingCell.column === name;
+                    {d.isNew ? (
+                      <button type="button" aria-label="Remove new row" onClick={() => editing.onRemoveNew(d.id)}>
+                        <X className="size-3.5" />
+                      </button>
+                    ) : d.key ? (
+                      <input
+                        type="checkbox"
+                        aria-label="Select row"
+                        checked={editing.selectedRows.has(d.id)}
+                        onChange={() => editing.onToggleRow(d.id)}
+                      />
+                    ) : null}
+                    <button
+                      type="button"
+                      aria-label="Expand row"
+                      title="Expand row"
+                      onClick={() => editing.onExpandRow(d.id)}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <Maximize2 className="size-3.5" />
+                    </button>
+                  </div>
+                )}
+                {columns.map((laid, i) => {
+                  const name = laid.column.name;
+                  const ref = { rowId: d.id, column: name };
+                  const k = cellKey(d.id, name);
+                  const isChanged = changed.has(k);
+                  const isEditing = editingCell?.rowId === d.id && editingCell.column === name;
+                  const fwd = relations.find((r) => r.kind === "forward" && r.local === name);
+                  return (
+                    <GridCell
+                      // A changed cell remounts on each revision so its flash restarts, unless it is being edited:
+                      // remounting would throw away what the person is typing.
+                      key={isChanged && !isEditing ? `${k}:${page.revision}` : k}
+                      index={i + (editing ? 2 : 1)}
+                      column={laid.column}
+                      width={laid.width}
+                      value={cellValue(d, name)}
+                      isNew={d.isNew}
+                      pending={!d.isNew && Boolean(editing?.draft.updates[d.id]?.cells[name])}
+                      conflict={editing?.conflicts.has(k) ?? false}
+                      changed={isChanged}
+                      selected={focus?.rowId === d.id && focus.column === name}
+                      inRange={range.has(k)}
+                      editing={editingCell?.rowId === d.id && editingCell.column === name && !editingCell.expanded}
+                      onSelect={(extend) => select(ref, extend)}
+                      onStartEdit={() => startEditing(ref)}
+                      onCommit={(v, move) => commit(ref, v, move)}
+                      onCancel={() => setEditingCell(null)}
+                      onExpand={() => setEditingCell((c) => (c ? { ...c, expanded: true } : c))}
+                      onToggleRelation={fwd ? () => toggleRel(d.id, fwd) : undefined}
+                      relationOpen={fwd ? expanded.has(relKey(d.id, fwd)) : undefined}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        if (!range.has(k)) select(ref, false);
+                        setMenu({ x: e.clientX, y: e.clientY, rowId: ref.rowId });
+                      }}
+                    />
+                  );
+                })}
+                {reverseRels.map((rel, i) => (
+                  // biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot
+                  <div
+                    key={rel.name}
+                    role="gridcell"
+                    tabIndex={-1}
+                    aria-colindex={columns.length + (editing ? 2 : 1) + i}
+                    className="flex shrink-0 items-center border-r px-2"
+                    style={{ width: REVERSE_WIDTH }}
+                  >
+                    <button
+                      type="button"
+                      aria-label={`Open ${rel.name}`}
+                      aria-expanded={expanded.has(relKey(d.id, rel)) || undefined}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleRel(d.id, rel);
+                      }}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      →
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {openRels.map((rel) => {
+                const target = (tables ?? [table]).find(
+                  (t) => t.schema === rel.table.schema && t.name === rel.table.name,
+                );
+                if (!dataSource || !target) return null;
+                const value = cellValue(d, rel.local) ?? null;
                 return (
-                  <GridCell
-                    // A changed cell remounts on each revision so its flash restarts, unless it is being edited:
-                    // remounting would throw away what the person is typing.
-                    key={isChanged && !isEditing ? `${k}:${page.revision}` : k}
-                    index={i + (editing ? 2 : 1)}
-                    column={laid.column}
-                    width={laid.width}
-                    value={cellValue(d, name)}
-                    isNew={d.isNew}
-                    pending={!d.isNew && Boolean(editing?.draft.updates[d.id]?.cells[name])}
-                    conflict={editing?.conflicts.has(k) ?? false}
-                    changed={isChanged}
-                    selected={selected?.rowId === d.id && selected.column === name}
-                    editing={editingCell?.rowId === d.id && editingCell.column === name && !editingCell.expanded}
-                    onSelect={() => {
-                      setSelected(ref);
-                      editing?.onFocusRow(ref.rowId);
-                    }}
-                    onStartEdit={() => startEditing(ref)}
-                    onCommit={(v, move) => commit(ref, v, move)}
-                    onCancel={() => setEditingCell(null)}
-                    onExpand={() => setEditingCell((c) => (c ? { ...c, expanded: true } : c))}
+                  <FkPreview
+                    key={rel.name}
+                    ds={dataSource}
+                    table={target}
+                    column={rel.column}
+                    value={value}
+                    onOpen={() => openRelation(rel, value)}
                   />
                 );
               })}
@@ -282,6 +540,26 @@ export function DataGrid({ table, page, changed, columns, sort, onSort, onResize
           isNew={expandedRow.isNew}
           onSave={(v) => commit(editingCell, v)}
           onClose={() => setEditingCell(null)}
+        />
+      )}
+      {menu && (
+        <CellMenu
+          x={menu.x}
+          y={menu.y}
+          onCopy={() => {
+            copy();
+            setMenu(null);
+          }}
+          onPaste={() => {
+            paste();
+            setMenu(null);
+          }}
+          onExpand={editing ? () => editing.onExpandRow(menu.rowId) : undefined}
+          onExport={(kind) => {
+            exportRows(kind);
+            setMenu(null);
+          }}
+          onClose={() => setMenu(null)}
         />
       )}
     </div>

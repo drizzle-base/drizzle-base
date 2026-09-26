@@ -141,3 +141,19 @@ pending cells, a blue selected-cell border with a 8% fill, a row-hover colour, a
   through `calendarDay` / `parsePgTime` (`setFullYear` / `setUTCFullYear`).
 - CodeMirror 6 is its own chunk, fetched on first use (entry: 201 kB gzip; CodeMirror chunk: 102 kB gzip);
   `codeEditor="textarea"` keeps it from ever loading.
+
+## Selection, export, relations (S4, observed 25 Sep 2026)
+
+- One selected cell (blue outline, 8% fill). Checkboxes select rows for delete. No cell range in their grid
+  (react-data-grid). Context menu: Copy (C), Paste (V), Export ▸ (.json .csv .sql .xlsx), Expand Row.
+- Toolbar `…` exports / copies. Export is the current result, not a server cursor.
+- FK: `→` on hover expands a sub-grid; "Open in sub view" goes to that table. Reverse relations are extra
+  columns (`posts`, `comments`, …).
+
+## Decisions taken from this (S4)
+
+- We own a rectangle (click + Shift+click / Shift+arrows). Copy is TSV of wire text; paste is pending edits;
+  an invalid cell is skipped.
+- Export is `.json` / `.csv` / `.sql` of the checkbox selection, or the page. No `.xlsx`.
+- FK preview is a measured block inside the virtual row, not Table's expanding model. Open pushes a
+  `StudioView`. Reverse columns are derived from `references` and are not in the layout prefs.
