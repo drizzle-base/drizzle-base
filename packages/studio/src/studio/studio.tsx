@@ -561,10 +561,12 @@ export function Studio({
             />
           )}
           {table && filtersOpen && !structure && (
+            // Leftovers seed the bar only when nothing is applied: the page request still uses view.filters.
             <FilterBar
               table={table}
-              applied={view.filters}
+              applied={view.filters.length > 0 ? view.filters : (prefs.filterDrafts(draftKey) ?? [])}
               onApply={(filters) => change({ filters, offset: 0 }, "push")}
+              onDraftChange={(filters) => prefs.setFilterDrafts(draftKey, filters)}
             />
           )}
           {warnings.length > 0 && (

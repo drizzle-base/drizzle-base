@@ -1,5 +1,5 @@
 import type { ColumnInfo } from "../contract";
-import { decodeView, encodeView, type StudioView } from "../view";
+import { decodeView, encodeView, type StudioView, type ViewFilter } from "../view";
 
 export interface ColumnLayout {
   order: string[];
@@ -45,6 +45,8 @@ export interface Prefs {
   setLayout(table: string, layout: ColumnLayout): void;
   lastView(table: string): StudioView | null;
   setLastView(table: string, view: StudioView): void;
+  filterDrafts(table: string): ViewFilter[] | null;
+  setFilterDrafts(table: string, filters: ViewFilter[]): void;
 }
 
 function browserStorage(): Storage | null {
@@ -56,6 +58,21 @@ function browserStorage(): Storage | null {
 }
 
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
+
+function asFilters(v: unknown): ViewFilter[] | null {
+  if (!Array.isArray(v)) return null;
+  const out: ViewFilter[] = [];
+  for (const item of v) {
+    if (typeof item !== "object" || item === null) return null;
+    const o = item as Record<string, unknown>;
+    const column = o["column"];
+    const op = o["op"];
+    const text = o["text"];
+    if (typeof column !== "string" || typeof op !== "string" || typeof text !== "string") return null;
+    out.push({ column, op: op as ViewFilter["op"], text });
+  }
+  return out;
+}
 
 function asLayout(v: unknown): ColumnLayout | null {
   if (typeof v !== "object" || v === null) return null;
@@ -69,7 +86,7 @@ function asLayout(v: unknown): ColumnLayout | null {
   return { order, hidden, widths: clean };
 }
 
-/** Per-table layouts and last views in localStorage. A convenience: unreadable or blocked storage is "nothing saved". */
+/** Per-table layouts, last views, and unapplied filter drafts in localStorage. A convenience: unreadable or blocked storage is "nothing saved". */
 export function createPrefs(namespace: string, storage: Storage | null = browserStorage()): Prefs {
   const key = (kind: string, table: string) => `dzb-studio:${namespace}:${kind}:${table}`;
   const read = (k: string): string | null => {
@@ -104,5 +121,15 @@ export function createPrefs(namespace: string, storage: Storage | null = browser
       return errors.length === 0 && view.table === table ? view : null;
     },
     setLastView: (table, view) => write(key("view", table), encodeView(view)),
+    filterDrafts(table) {
+      const raw = read(key("filters", table));
+      if (raw === null) return null;
+      try {
+        return asFilters(JSON.parse(raw));
+      } catch {
+        return null;
+      }
+    },
+    setFilterDrafts: (table, filters) => write(key("filters", table), JSON.stringify(filters)),
   };
 }

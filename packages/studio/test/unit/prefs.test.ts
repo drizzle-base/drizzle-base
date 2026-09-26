@@ -41,20 +41,32 @@ describe("createPrefs", () => {
     a.setLastView("public.users", view);
     expect(a.lastView("public.users")).toEqual(view);
     expect(a.lastView("public.posts")).toBeNull();
+    const leftover = [{ column: "age", op: "gt" as const, text: "3" }];
+    a.setFilterDrafts("public.users", leftover);
+    expect(a.filterDrafts("public.users")).toEqual(leftover);
+    expect(b.filterDrafts("public.users")).toBeNull();
+    expect(a.filterDrafts("public.posts")).toBeNull();
+    expect(localStorage.getItem("dzb-studio:db-a:filters:public.users")).toBe(JSON.stringify(leftover));
   });
   test("garbage in storage reads as nothing saved", () => {
     localStorage.setItem("dzb-studio:x:layout:t", "{not json");
     localStorage.setItem("dzb-studio:x:view:t", "v=9&table=t");
+    localStorage.setItem("dzb-studio:x:filters:t", "{not json");
     const p = createPrefs("x");
     expect(p.layout("t")).toEqual(EMPTY_LAYOUT);
     expect(p.lastView("t")).toBeNull();
+    expect(p.filterDrafts("t")).toBeNull();
     // Half-readable is unreadable: a saved view missing one of its filters would show more rows than it did.
     localStorage.setItem("dzb-studio:x:view:t", "v=1&table=t&where=garbage");
     expect(p.lastView("t")).toBeNull();
+    localStorage.setItem("dzb-studio:x:filters:t", JSON.stringify([{ column: "age" }]));
+    expect(p.filterDrafts("t")).toBeNull();
   });
   test("no storage (blocked or absent): nothing is saved and nothing throws", () => {
     const p = createPrefs("x", null);
     p.setLayout("t", { order: ["a"], hidden: [], widths: {} });
+    p.setFilterDrafts("t", [{ column: "age", op: "eq", text: "1" }]);
     expect(p.layout("t")).toEqual(EMPTY_LAYOUT);
+    expect(p.filterDrafts("t")).toBeNull();
   });
 });

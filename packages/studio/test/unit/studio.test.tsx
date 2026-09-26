@@ -111,6 +111,37 @@ describe("<Studio>", () => {
     await openTable("audit_log");
     expect(await screen.findByText("read-only")).toBeTruthy();
   });
+  test("unapplied filter drafts survive remount; applied URL filters win", async () => {
+    const { ds } = sources();
+    const first = render(<Studio dataSource={ds} defaultView={{ ...EMPTY_VIEW, table: "public.users" }} />);
+    await screen.findByText("1 - 50 of 3000");
+    fireEvent.click(screen.getByRole("button", { name: /^Filters/ }));
+    const rowOf = () => within(screen.getByRole("group", { name: "Filter 1" }));
+    fireEvent.change(rowOf().getByLabelText("Column"), { target: { value: "name" } });
+    fireEvent.change(rowOf().getByLabelText("Value"), { target: { value: "User 1" } });
+    expect(screen.getByText("1 - 50 of 3000")).toBeTruthy();
+    first.unmount();
+    const remounted = render(<Studio dataSource={ds} defaultView={{ ...EMPTY_VIEW, table: "public.users" }} />);
+    await screen.findByText("1 - 50 of 3000");
+    fireEvent.click(screen.getByRole("button", { name: /^Filters/ }));
+    expect((rowOf().getByLabelText("Value") as HTMLInputElement).value).toBe("User 1");
+    expect(createPrefs("default").filterDrafts("public.users")).toEqual([{ column: "name", op: "eq", text: "User 1" }]);
+    remounted.unmount();
+    createPrefs("default").setFilterDrafts("public.users", [{ column: "name", op: "eq", text: "leftover" }]);
+    render(
+      <Studio
+        dataSource={ds}
+        defaultView={{
+          ...EMPTY_VIEW,
+          table: "public.users",
+          filters: [{ column: "role", op: "eq", text: "admin" }],
+        }}
+      />,
+    );
+    expect(await screen.findByText("1 - 50 of 50+")).toBeTruthy();
+    expect((rowOf().getByLabelText("Value") as HTMLSelectElement).value).toBe("admin");
+  });
+
   test("filters narrow the rows; the pager says 50+ until counted", async () => {
     setup();
     await openTable("users");
