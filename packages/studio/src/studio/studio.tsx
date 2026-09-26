@@ -313,6 +313,12 @@ export function Studio({
           setLayout({ ...layout, widths: { ...layout.widths, [column]: width } }, commit)
         }
         editing={gridEditing}
+        dataSource={dataSource}
+        tables={tables ?? undefined}
+        onOpenRelation={(next) => {
+          setFiltersOpen(true);
+          change({ table: next.table, filters: next.filters, sort: [], offset: 0 }, "push");
+        }}
       />
     );
   else if (table) body = <p className="p-4 text-sm text-muted-foreground">Loading…</p>;

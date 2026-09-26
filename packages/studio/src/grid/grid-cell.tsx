@@ -22,6 +22,8 @@ export interface GridCellProps {
   onCancel(): void;
   onExpand(): void;
   onContextMenu(e: MouseEvent): void;
+  onToggleRelation?(): void;
+  relationOpen?: boolean;
 }
 
 export function GridCell(p: GridCellProps) {
@@ -61,7 +63,23 @@ export function GridCell(p: GridCellProps) {
           onExpand={p.onExpand}
         />
       ) : (
-        <span className="truncate">{text}</span>
+        <>
+          <span className="min-w-0 truncate">{text}</span>
+          {p.column.references && (
+            <button
+              type="button"
+              aria-label={`Open ${p.column.references.table}`}
+              aria-expanded={p.relationOpen || undefined}
+              onClick={(e) => {
+                e.stopPropagation();
+                p.onToggleRelation?.();
+              }}
+              className="ml-1 shrink-0 text-muted-foreground hover:text-foreground"
+            >
+              →
+            </button>
+          )}
+        </>
       )}
     </div>
   );

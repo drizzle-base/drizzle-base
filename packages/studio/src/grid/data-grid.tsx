@@ -2,23 +2,42 @@ import { type ColumnDef, tableFeatures, useTable } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Maximize2, X } from "lucide-react";
 import { type KeyboardEvent, useMemo, useRef, useState } from "react";
-import type { CellValue, Page, Row, RowKey, Sort, TableInfo } from "../contract";
+import {
+  type CellValue,
+  type Page,
+  type Row,
+  type RowKey,
+  type Sort,
+  type StudioDataSource,
+  type TableInfo,
+  tableId,
+} from "../contract";
 import type { TableDraft } from "../edit/draft";
 import { ExpandedEditor } from "../edit/expanded-editor";
 import { opensExpanded, parseCellValue } from "../edit/values";
 import { cellKey, rowIdOf } from "../studio/format";
 import type { LaidOutColumn } from "../studio/prefs";
-import { type HeaderSortAction, sortPosition } from "../view";
+import { type Relation, relationsOf } from "../studio/relations";
+import { type HeaderSortAction, type StudioView, sortPosition } from "../view";
 import { CellMenu } from "./cell-menu";
 import { browserClipboard, type ClipboardIO, valuesToTsv } from "./clipboard";
 import { download, exportCsv, exportJson, exportSql, rowsToExport } from "./export";
+import { FkPreview } from "./fk-preview";
 import { GridCell } from "./grid-cell";
 import { HeaderCell } from "./header-cell";
 import { type CellRef, cellsInRect, parseTsv } from "./range";
 
 const ROW_HEIGHT = 32;
 const LEAD_WIDTH = 56;
+const REVERSE_WIDTH = 140;
+const EXPAND_EXTRA = 160;
 const features = tableFeatures({});
+
+function wireText(value: CellValue): string {
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (Array.isArray(value)) return JSON.stringify(value);
+  return String(value);
+}
 
 export interface GridEditing {
   draft: TableDraft;
@@ -46,6 +65,9 @@ export interface DataGridProps {
   /** Absent: read-only. */
   editing?: GridEditing;
   clipboard?: ClipboardIO;
+  tables?: TableInfo[];
+  dataSource?: StudioDataSource;
+  onOpenRelation?(view: Pick<StudioView, "table" | "filters">): void;
 }
 
 interface DisplayRow {
@@ -65,6 +87,9 @@ export function DataGrid({
   onResize,
   editing,
   clipboard = browserClipboard,
+  tables,
+  dataSource,
+  onOpenRelation,
 }: DataGridProps) {
   const inserts = editing?.draft.inserts;
   const display = useMemo<DisplayRow[]>(
@@ -91,10 +116,19 @@ export function DataGrid({
   const grid = useTable({ features, columns: defs, data: display, getRowId: (d) => d.id });
   const scrollRef = useRef<HTMLDivElement>(null);
   const rows = grid.getRowModel().rows;
+  const relations = useMemo(() => relationsOf(table, tables ?? [table]), [table, tables]);
+  const reverseRels = useMemo(() => relations.filter((r) => r.kind === "reverse"), [relations]);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const relKey = (rowId: string, rel: Relation) => cellKey(rowId, rel.kind === "forward" ? rel.local : rel.name);
+  const expandedFor = (rowId: string) => relations.filter((r) => expanded.has(relKey(rowId, r)));
   const virtual = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: (index) => {
+      const d = display[index];
+      return d && expandedFor(d.id).length > 0 ? ROW_HEIGHT + EXPAND_EXTRA : ROW_HEIGHT;
+    },
+    measureElement: (el) => el.getBoundingClientRect().height,
     overscan: 12,
   });
   const [anchor, setAnchor] = useState<CellRef | null>(null);
@@ -105,7 +139,7 @@ export function DataGrid({
   const [editingCell, setEditingCell] = useState<(CellRef & { expanded: boolean; original: CellValue }) | null>(null);
 
   const lead = editing ? LEAD_WIDTH : 0;
-  const width = lead + columns.reduce((w, c) => w + c.width, 0);
+  const width = lead + columns.reduce((w, c) => w + c.width, 0) + reverseRels.length * REVERSE_WIDTH;
   const byId = new Map(display.map((d) => [d.id, d]));
   const existingIds = display.filter((d) => !d.isNew && d.key).map((d) => d.id);
   const allSelected = existingIds.length > 0 && existingIds.every((id) => editing?.selectedRows.has(id));
@@ -120,6 +154,22 @@ export function DataGrid({
     if (d.isNew) return Object.hasOwn(d.row, column) ? (d.row[column] ?? null) : undefined;
     const pending = editing?.draft.updates[d.id]?.cells[column];
     return pending ? pending.value : (d.row[column] ?? null);
+  };
+  const toggleRel = (rowId: string, rel: Relation) => {
+    const k = relKey(rowId, rel);
+    setExpanded((s) => {
+      const next = new Set(s);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  };
+  const openRelation = (rel: Relation, value: CellValue | undefined) => {
+    const text = value === undefined || value === null ? "" : wireText(value);
+    onOpenRelation?.({
+      table: tableId(rel.table),
+      filters: [{ column: rel.column, op: "eq", text }],
+    });
   };
   const select = (ref: CellRef, extend: boolean) => {
     setFocus(ref);
@@ -287,7 +337,7 @@ export function DataGrid({
       role="grid"
       tabIndex={0}
       aria-rowcount={rows.length + 1}
-      aria-colcount={columns.length + (editing ? 1 : 0)}
+      aria-colcount={columns.length + reverseRels.length + (editing ? 1 : 0)}
       onKeyDown={onKeyDown}
       className="relative h-full overflow-auto font-mono text-[13px] outline-none"
     >
@@ -327,87 +377,155 @@ export function DataGrid({
             onResize={(w, done) => onResize(c.column.name, w, done)}
           />
         ))}
+        {reverseRels.map((rel, i) => (
+          // biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot
+          <div
+            key={rel.name}
+            role="columnheader"
+            tabIndex={-1}
+            aria-colindex={columns.length + (editing ? 1 : 0) + i + 1}
+            className="relative flex h-8 shrink-0 items-center border-r px-2"
+            style={{ width: REVERSE_WIDTH }}
+          >
+            <span className="truncate font-semibold">{rel.name}</span>
+          </div>
+        ))}
       </div>
       <div className="relative" style={{ height: virtual.getTotalSize(), width }}>
         {virtual.getVirtualItems().map((item) => {
           const tr = rows[item.index];
           if (!tr) return null;
           const d = tr.original;
+          const openRels = expandedFor(d.id);
           return (
             // biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot
             <div
               key={d.id}
+              ref={virtual.measureElement}
+              data-index={item.index}
               role="row"
               tabIndex={-1}
               aria-rowindex={item.index + 2}
               data-new={d.isNew || undefined}
-              className="absolute left-0 flex border-b hover:bg-muted/60"
-              style={{ height: ROW_HEIGHT, width, transform: `translateY(${item.start}px)` }}
+              className="absolute left-0 border-b hover:bg-muted/60"
+              style={{
+                position: "absolute",
+                left: 0,
+                transform: `translateY(${item.start}px)`,
+                width,
+                minHeight: ROW_HEIGHT,
+              }}
             >
-              {editing && (
-                // biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot
-                <div
-                  role="gridcell"
-                  tabIndex={-1}
-                  aria-colindex={1}
-                  className="flex shrink-0 items-center justify-center gap-1.5 border-r"
-                  style={{ width: LEAD_WIDTH }}
-                >
-                  {d.isNew ? (
-                    <button type="button" aria-label="Remove new row" onClick={() => editing.onRemoveNew(d.id)}>
-                      <X className="size-3.5" />
-                    </button>
-                  ) : d.key ? (
-                    <input
-                      type="checkbox"
-                      aria-label="Select row"
-                      checked={editing.selectedRows.has(d.id)}
-                      onChange={() => editing.onToggleRow(d.id)}
-                    />
-                  ) : null}
-                  <button
-                    type="button"
-                    aria-label="Expand row"
-                    title="Expand row"
-                    onClick={() => editing.onExpandRow(d.id)}
-                    className="text-muted-foreground hover:text-foreground"
+              <div className="flex" style={{ height: ROW_HEIGHT, width }}>
+                {editing && (
+                  // biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot
+                  <div
+                    role="gridcell"
+                    tabIndex={-1}
+                    aria-colindex={1}
+                    className="flex shrink-0 items-center justify-center gap-1.5 border-r"
+                    style={{ width: LEAD_WIDTH }}
                   >
-                    <Maximize2 className="size-3.5" />
-                  </button>
-                </div>
-              )}
-              {columns.map((laid, i) => {
-                const name = laid.column.name;
-                const ref = { rowId: d.id, column: name };
-                const k = cellKey(d.id, name);
-                const isChanged = changed.has(k);
-                const isEditing = editingCell?.rowId === d.id && editingCell.column === name;
+                    {d.isNew ? (
+                      <button type="button" aria-label="Remove new row" onClick={() => editing.onRemoveNew(d.id)}>
+                        <X className="size-3.5" />
+                      </button>
+                    ) : d.key ? (
+                      <input
+                        type="checkbox"
+                        aria-label="Select row"
+                        checked={editing.selectedRows.has(d.id)}
+                        onChange={() => editing.onToggleRow(d.id)}
+                      />
+                    ) : null}
+                    <button
+                      type="button"
+                      aria-label="Expand row"
+                      title="Expand row"
+                      onClick={() => editing.onExpandRow(d.id)}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <Maximize2 className="size-3.5" />
+                    </button>
+                  </div>
+                )}
+                {columns.map((laid, i) => {
+                  const name = laid.column.name;
+                  const ref = { rowId: d.id, column: name };
+                  const k = cellKey(d.id, name);
+                  const isChanged = changed.has(k);
+                  const isEditing = editingCell?.rowId === d.id && editingCell.column === name;
+                  const fwd = relations.find((r) => r.kind === "forward" && r.local === name);
+                  return (
+                    <GridCell
+                      // A changed cell remounts on each revision so its flash restarts, unless it is being edited:
+                      // remounting would throw away what the person is typing.
+                      key={isChanged && !isEditing ? `${k}:${page.revision}` : k}
+                      index={i + (editing ? 2 : 1)}
+                      column={laid.column}
+                      width={laid.width}
+                      value={cellValue(d, name)}
+                      isNew={d.isNew}
+                      pending={!d.isNew && Boolean(editing?.draft.updates[d.id]?.cells[name])}
+                      conflict={editing?.conflicts.has(k) ?? false}
+                      changed={isChanged}
+                      selected={focus?.rowId === d.id && focus.column === name}
+                      inRange={range.has(k)}
+                      editing={editingCell?.rowId === d.id && editingCell.column === name && !editingCell.expanded}
+                      onSelect={(extend) => select(ref, extend)}
+                      onStartEdit={() => startEditing(ref)}
+                      onCommit={(v, move) => commit(ref, v, move)}
+                      onCancel={() => setEditingCell(null)}
+                      onExpand={() => setEditingCell((c) => (c ? { ...c, expanded: true } : c))}
+                      onToggleRelation={fwd ? () => toggleRel(d.id, fwd) : undefined}
+                      relationOpen={fwd ? expanded.has(relKey(d.id, fwd)) : undefined}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        if (!range.has(k)) select(ref, false);
+                        setMenu({ x: e.clientX, y: e.clientY, rowId: ref.rowId });
+                      }}
+                    />
+                  );
+                })}
+                {reverseRels.map((rel, i) => (
+                  // biome-ignore lint/a11y/useSemanticElements: a virtualised grid positions rows absolutely; <table> layout cannot
+                  <div
+                    key={rel.name}
+                    role="gridcell"
+                    tabIndex={-1}
+                    aria-colindex={columns.length + (editing ? 2 : 1) + i}
+                    className="flex shrink-0 items-center border-r px-2"
+                    style={{ width: REVERSE_WIDTH }}
+                  >
+                    <button
+                      type="button"
+                      aria-label={`Open ${rel.name}`}
+                      aria-expanded={expanded.has(relKey(d.id, rel)) || undefined}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleRel(d.id, rel);
+                      }}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      →
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {openRels.map((rel) => {
+                const target = (tables ?? [table]).find(
+                  (t) => t.schema === rel.table.schema && t.name === rel.table.name,
+                );
+                if (!dataSource || !target) return null;
+                const value = cellValue(d, rel.local) ?? null;
                 return (
-                  <GridCell
-                    // A changed cell remounts on each revision so its flash restarts, unless it is being edited:
-                    // remounting would throw away what the person is typing.
-                    key={isChanged && !isEditing ? `${k}:${page.revision}` : k}
-                    index={i + (editing ? 2 : 1)}
-                    column={laid.column}
-                    width={laid.width}
-                    value={cellValue(d, name)}
-                    isNew={d.isNew}
-                    pending={!d.isNew && Boolean(editing?.draft.updates[d.id]?.cells[name])}
-                    conflict={editing?.conflicts.has(k) ?? false}
-                    changed={isChanged}
-                    selected={focus?.rowId === d.id && focus.column === name}
-                    inRange={range.has(k)}
-                    editing={editingCell?.rowId === d.id && editingCell.column === name && !editingCell.expanded}
-                    onSelect={(extend) => select(ref, extend)}
-                    onStartEdit={() => startEditing(ref)}
-                    onCommit={(v, move) => commit(ref, v, move)}
-                    onCancel={() => setEditingCell(null)}
-                    onExpand={() => setEditingCell((c) => (c ? { ...c, expanded: true } : c))}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      if (!range.has(k)) select(ref, false);
-                      setMenu({ x: e.clientX, y: e.clientY, rowId: ref.rowId });
-                    }}
+                  <FkPreview
+                    key={rel.name}
+                    ds={dataSource}
+                    table={target}
+                    column={rel.column}
+                    value={value}
+                    onOpen={() => openRelation(rel, value)}
                   />
                 );
               })}
