@@ -29,12 +29,17 @@ function resolveAnchor(raw: unknown): { getBoundingClientRect(): DOMRect } {
   throw new Error("Positioner anchor is not a virtual element");
 }
 
+const POSITIONER_CLASS = "isolate z-50 outline-none";
+
 /** happy-dom has no layout; the virtual element's rect is the wiring that can be sabotaged. */
 function positionerAnchorRect(menu: HTMLElement): DOMRect {
   let fiber = fiberOf(menu);
   while (fiber) {
-    const raw = fiber.memoizedProps?.["anchor"];
-    if (raw != null) return resolveAnchor(raw).getBoundingClientRect();
+    const className = fiber.memoizedProps?.["className"];
+    if (typeof className === "string" && className.includes(POSITIONER_CLASS)) {
+      const raw = fiber.memoizedProps?.["anchor"];
+      if (raw != null) return resolveAnchor(raw).getBoundingClientRect();
+    }
     fiber = fiber.return;
   }
   throw new Error("Positioner has no anchor");
