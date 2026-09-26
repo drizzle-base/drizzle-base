@@ -183,7 +183,7 @@ NULL/DEFAULT, bytea, json and arrays in an expanded editor), add and delete rows
   `parseScalar`; a saved new row that is off this page stays in the panel from the inserted key; a pick in the
   panel updates the field text so blur cannot undo it. Minors recorded (CodeMirror `json()` on arrays; e2e day
   matcher). S4 (`docs/superpowers/plans/2026-09-25-studio-00-4-selection.md`): cell range, TSV clipboard, export of the
-  selection or page, foreign-key preview and Open. Next: S5 import UI, structure tab, final review.
+  selection or page, foreign-key preview and Open. S5 (`docs/superpowers/plans/2026-09-26-studio-00-5-import-structure.md`): import as pending inserts, Structure pane, `StudioView.pane`, filter drafts, resize cleanup. Next: STUDIO-00 closed; core is 01a-4b then the adapter.
 
 ## 6. What happens later (not this session)
 

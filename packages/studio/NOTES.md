@@ -157,3 +157,18 @@ pending cells, a blue selected-cell border with a 8% fill, a row-hover colour, a
 - Export is `.json` / `.csv` / `.sql` of the checkbox selection, or the page. No `.xlsx`.
 - FK preview is a measured block inside the virtual row, not Table's expanding model. Open pushes a
   `StudioView`. Reverse columns are derived from `references` and are not in the layout prefs.
+
+## Import and structure (S5, observed 25 Sep 2026)
+
+- Toolbar DATA / STRUCTURE. Structure lists columns (type, nullable, default, PK), indexes and foreign keys.
+- Import is a dialog (JSON / CSV / SQL / .xlsx). We do not copy `.xlsx`.
+- Filter rows persist per table in their store. Header resize uses window pointer listeners.
+
+## Decisions taken from this (S5)
+
+- Import is pending inserts (`addRow` / `setNewCell`); Save is the existing atomic `applyEdits`. A bad cell
+  is skipped; extras ignored; missing columns omitted (DEFAULT). SQL is the inverse of our `exportSql` only.
+- Indexes are honest: only the PK the mock already enforces (`{name}_pkey`). Views and heaps have `[]`.
+- `StudioView.pane` is `"data" | "structure"` and rides the URL. Missing pane is data; a bad pane is reported
+  and skipped. Back returns to DATA.
+- Filter drafts persist per table; applied URL filters win. ResizeHandle drops window listeners on unmount.
