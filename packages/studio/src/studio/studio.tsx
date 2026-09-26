@@ -116,9 +116,17 @@ export function Studio({
   const table = tables?.find((t) => tableId(t) === view.table) ?? null;
   // Keyed by content: a controlled host may hand an equal but new view object on every render.
   const viewKey = JSON.stringify(view);
+  // Pane is UI-only: it must not resubscribe the page or clear the selection.
+  const pageKey = JSON.stringify({
+    table: view.table,
+    filters: view.filters,
+    sort: view.sort,
+    limit: view.limit,
+    offset: view.offset,
+  });
   const filtersKey = JSON.stringify([view.table, view.filters]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: viewKey stands for view's content
-  const base = useMemo(() => (table ? toPageRequest(view, table, false) : null), [table, viewKey]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pageKey stands for the page request
+  const base = useMemo(() => (table ? toPageRequest(view, table, false) : null), [table, pageKey]);
   // Count when nothing filters the rows (what applies, not what the view names) or when asked to.
   const withTotal = (base?.req.filters.length ?? 0) === 0 || countedFor === filtersKey;
   const resolved = useMemo(() => (base ? { ...base, req: { ...base.req, withTotal } } : null), [base, withTotal]);
@@ -147,10 +155,10 @@ export function Studio({
     setView({ ...view, offset }, { history: "replace" });
   }, [page, view, setView]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new view (table, page, filters) clears the selection
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new page (table, filters, sort, limit, offset) clears the selection
   useEffect(() => {
     setSelectedRows(new Set());
-  }, [viewKey]);
+  }, [pageKey]);
 
   useEffect(() => {
     setPanel((p) => (p && p.table !== view.table ? null : p));
