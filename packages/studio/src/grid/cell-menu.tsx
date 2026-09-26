@@ -6,6 +6,7 @@ export function CellMenu({
   onCopy,
   onPaste,
   onExpand,
+  onExport,
   onClose,
 }: {
   x: number;
@@ -13,6 +14,7 @@ export function CellMenu({
   onCopy(): void;
   onPaste(): void;
   onExpand?: () => void;
+  onExport(kind: "json" | "csv" | "sql"): void;
   onClose(): void;
 }) {
   return (
@@ -23,7 +25,9 @@ export function CellMenu({
           <DropdownMenuItem onClick={onCopy}>Copy</DropdownMenuItem>
           <DropdownMenuItem onClick={onPaste}>Paste</DropdownMenuItem>
           {onExpand && <DropdownMenuItem onClick={onExpand}>Expand Row</DropdownMenuItem>}
-          {/* Task 4: Export ▸ */}
+          <DropdownMenuItem onClick={() => onExport("json")}>Export JSON</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onExport("csv")}>Export CSV</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onExport("sql")}>Export SQL</DropdownMenuItem>
         </DropdownMenuContent>
       </div>
     </DropdownMenu>

@@ -11,6 +11,7 @@ import type { LaidOutColumn } from "../studio/prefs";
 import { type HeaderSortAction, sortPosition } from "../view";
 import { CellMenu } from "./cell-menu";
 import { browserClipboard, type ClipboardIO, valuesToTsv } from "./clipboard";
+import { download, exportCsv, exportJson, exportSql, rowsToExport } from "./export";
 import { GridCell } from "./grid-cell";
 import { HeaderCell } from "./header-cell";
 import { type CellRef, cellsInRect, parseTsv } from "./range";
@@ -203,6 +204,25 @@ export function DataGrid({
     void clipboard.read().then((text) => {
       applyTsv(text, origin);
     });
+  };
+  const exportRows = (kind: "json" | "csv" | "sql") => {
+    const cells = anchor && focus ? cellsInRect(anchor, focus, rowIds, colNames) : [];
+    const rangeIds: string[] = [];
+    for (const c of cells) {
+      if (!rangeIds.includes(c.rowId)) rangeIds.push(c.rowId);
+    }
+    const pageForExport = display.filter((d) => !d.isNew).map((d) => ({ id: d.id, row: d.row }));
+    const rows =
+      rangeIds.length > 0
+        ? rangeIds.flatMap((id) => {
+            const d = byId.get(id);
+            return d ? [d.row] : [];
+          })
+        : rowsToExport(editing?.selectedRows ?? new Set(), pageForExport);
+    const cols = table.columns;
+    if (kind === "json") download(`${table.name}.json`, exportJson(cols, rows), "application/json");
+    else if (kind === "csv") download(`${table.name}.csv`, exportCsv(cols, rows), "text/csv");
+    else download(`${table.name}.sql`, exportSql(table, cols, rows), "text/plain");
   };
   const onKeyDown = (e: KeyboardEvent) => {
     if (editingCell) return;
@@ -417,6 +437,10 @@ export function DataGrid({
             setMenu(null);
           }}
           onExpand={editing ? () => editing.onExpandRow(menu.rowId) : undefined}
+          onExport={(kind) => {
+            exportRows(kind);
+            setMenu(null);
+          }}
           onClose={() => setMenu(null)}
         />
       )}
